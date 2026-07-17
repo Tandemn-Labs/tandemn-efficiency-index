@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TEI Observability</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="dashboard-shell">
+      <header class="page-header">
+        <div>
+          <p>Tandemn Efficiency Index</p>
+          <h1>Live telemetry</h1>
+        </div>
+        <div class="header-status">
+          <div class="live-state" id="liveState">
+            <span></span>
+            <strong>Connecting</strong>
+          </div>
+          <p id="lastUpdated">Waiting for the first sample</p>
+          <button id="refreshButton" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <div class="notice" id="notice" role="status" hidden></div>
+
+      <section class="run-context" id="runContext" aria-label="Observed workload"></section>
+
+      <section class="dashboard-section" aria-labelledby="performanceTitle">
+        <div class="section-heading">
+          <div>
+            <h2 id="performanceTitle">Performance</h2>
+            <p>Workload average across reporting GPUs</p>
+          </div>
+          <div class="range-pill" aria-label="Telemetry range">
+            <button type="button" data-window="900">15m</button>
+            <button class="active" type="button" data-window="3600">1h</button>
+            <button type="button" data-window="21600">6h</button>
+            <button type="button" data-window="86400">24h</button>
+          </div>
+        </div>
+        <div class="metric-grid" id="metricGrid"></div>
+        <p class="baseline-note">
+          Generic LLM inference baseline. Calibrate these bands against known-good runs for each GPU and model.
+        </p>
+      </section>
+
+      <section class="diagnostics-frame" aria-labelledby="diagnosticsTitle">
+        <div class="frame-heading diagnostics-heading">
+          <div>
+            <h2 id="diagnosticsTitle">Telemetry coverage</h2>
+            <p>All configured DCGM signals and per-GPU reporting completeness</p>
+          </div>
+          <div class="coverage-summary" id="coverageSummary"></div>
+        </div>
+        <div class="diagnostic-header" aria-hidden="true">
+          <span>Metric</span><span>Latest</span><span>Range</span><span>Coverage</span><span>Samples</span><span>Status</span>
+        </div>
+        <div class="diagnostic-list" id="diagnosticList"></div>
+      </section>
+
+      <section class="health-frame" aria-labelledby="healthTitle">
+        <div class="frame-heading">
+          <h2 id="healthTitle">Operational health</h2>
+          <p>Latest cluster safety and transport signals</p>
+        </div>
+        <div class="health-grid" id="healthGrid"></div>
+      </section>
+
+      <section class="worker-frame" aria-labelledby="workersTitle">
+        <div class="frame-heading worker-frame-heading">
+          <div>
+            <h2 id="workersTitle">Attributed workers</h2>
+            <p>Live placement and per-pod GPU pressure</p>
+          </div>
+          <strong id="workerCount">0 workers</strong>
+        </div>
+        <div class="worker-header" aria-hidden="true">
+          <span>Worker</span>
+          <span>Role</span>
+          <span>Node</span>
+          <span>GPUs</span>
+          <span>GPU Util</span>
+          <span>Memory</span>
+          <span>Last Seen</span>
+        </div>
+        <div class="worker-list" id="workerList"></div>
+      </section>
+
+      <section class="details-grid" aria-label="Raw telemetry details">
+        <details class="detail-frame" open>
+          <summary>Workload configuration</summary>
+          <div id="workloadDetails"></div>
+        </details>
+        <details class="detail-frame">
+          <summary>GPU scope and Prometheus labels</summary>
+          <div id="scopeDetails"></div>
+        </details>
+        <details class="detail-frame">
+          <summary>Unattributed telemetry</summary>
+          <div id="attributionDetails"></div>
+        </details>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
