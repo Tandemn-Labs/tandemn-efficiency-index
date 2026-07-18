@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      TEI_TEST_POSTGRES_DSN: postgresql://tei:tei@localhost:5432/tei
+      TEI_TEST_PROMETHEUS_URL: http://localhost:9090
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: tei
+          POSTGRES_PASSWORD: tei
+          POSTGRES_DB: tei
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tei -d tei"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      prometheus:
+        image: prom/prometheus:v3.13.1
+        ports:
+          - 9090:9090
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen --group dev
+      - run: curl --fail --retry 20 --retry-delay 1 http://localhost:9090/-/ready
+      - run: uv run ruff format --check src tests smoketest
+      - run: uv run ruff check src tests smoketest
+      - run: uv run mypy src tests smoketest
+      - run: uv run pytest
+      - run: uv run pytest smoketest
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm dependency build helm/tei
+      - run: helm lint helm/tei
+      - run: helm template tei helm/tei --namespace tei-system
+      - run: >-
+          helm template tei helm/tei
+          --namespace tei-system
+          --set postgresql.enabled=false
+          --set database.existingSecret.name=tei-postgresql
+          --set prometheus.enabled=false
+          --set prometheus.url=http://prometheus.monitoring.svc:9090
+          --set discovery.mode=namespaces
+          --set 'discovery.namespaces[0]=inference'
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: tei:test

@@ -14,10 +14,10 @@ from tandemn_efficiency_index.pod_attribution import WorkloadPodCollector
 class FakeCoreV1Api:
     def __init__(self, pods: list[Any]) -> None:
         self.pods = pods
-        self.requests: list[tuple[str, str]] = []
+        self.requests: list[str] = []
 
-    def list_namespaced_pod(self, namespace: str, label_selector: str) -> Any:
-        self.requests.append((namespace, label_selector))
+    def list_namespaced_pod(self, namespace: str) -> Any:
+        self.requests.append(namespace)
         return SimpleNamespace(items=self.pods)
 
 
@@ -54,13 +54,27 @@ def test_collects_worker_identity_and_preserves_first_seen_time() -> None:
             namespace="inference",
             name="qwen-worker-abc12",
             labels={
+                "nvidia.com/dynamo-graph-deployment-name": "qwen-production",
                 "nvidia.com/dynamo-component-type": "worker",
                 "nvidia.com/dynamo-sub-component-type": "decode",
             },
         ),
         spec=SimpleNamespace(
             node_name="gpu-node-1",
-            containers=[SimpleNamespace(name="main")],
+            containers=[
+                SimpleNamespace(
+                    name="main",
+                    resources=SimpleNamespace(
+                        requests={"cpu": "2", "memory": "8Gi"},
+                        limits={"nvidia.com/gpu": "1"},
+                    ),
+                )
+            ],
+        ),
+        status=SimpleNamespace(
+            phase="Running",
+            conditions=[SimpleNamespace(type="Ready", status="True")],
+            container_statuses=[SimpleNamespace(restart_count=2)],
         ),
     )
     api = FakeCoreV1Api([pod])
@@ -90,16 +104,16 @@ def test_collects_worker_identity_and_preserves_first_seen_time() -> None:
     worker = pods["pod-uid"]
     assert worker.workload_id == "dynamo:inference/qwen-production"
     assert worker.runtime_instance == "qwen-production"
+    assert worker.runtime_job_key == "qwen-production"
     assert worker.runtime_role == "decode"
     assert worker.first_seen_at == first_tick
     assert worker.last_seen_at == first_tick + timedelta(seconds=10)
-    assert api.requests == [
-        (
-            "inference",
-            "nvidia.com/dynamo-component-type=worker,"
-            "nvidia.com/dynamo-graph-deployment-name=qwen-production",
-        )
-    ]
+    assert worker.phase == "Running"
+    assert worker.ready is True
+    assert worker.restart_count == 2
+    assert worker.resource_requests == {"main": {"cpu": "2", "memory": "8Gi"}}
+    assert worker.resource_limits == {"main": {"nvidia.com/gpu": "1"}}
+    assert api.requests == ["inference"]
 
 
 def test_does_not_return_a_known_worker_after_it_disappears() -> None:

@@ -1,0 +1,12 @@
+dependencies:
+- name: prometheus
+  repository: https://prometheus-community.github.io/helm-charts
+  version: 29.17.0
+- name: dcgm-exporter
+  repository: https://nvidia.github.io/dcgm-exporter/helm-charts
+  version: 4.8.3
+- name: postgresql
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 18.8.0
+digest: sha256:86eab6214a0be4ea258d8fca4bd38b03810a91a3d1839fb81f07e63295fb2ebe
+generated: "2026-07-17T16:38:52.640048-07:00"

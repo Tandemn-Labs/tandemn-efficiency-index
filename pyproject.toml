@@ -4,13 +4,17 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tandemn-efficiency-index"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tandemn Efficiency Index"
 requires-python = ">=3.12"
 dependencies = [
     "kubernetes>=30.0.0",
+    "psycopg[binary]>=3.2.0",
     "pyyaml>=6.0.0",
 ]
+
+[project.scripts]
+tei = "tandemn_efficiency_index.app:main"
 
 [dependency-groups]
 dev = [
@@ -23,6 +27,13 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tandemn_efficiency_index"]
+
+[tool.hatch.build]
+exclude = [
+    "/.uv-cache",
+    "/.venv",
+    "/dist",
+]
 
 [tool.ruff]
 line-length = 100

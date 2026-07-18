@@ -20,7 +20,28 @@ from tandemn_efficiency_index.models.workload import (
     WorkloadRuntime,
 )
 from tandemn_efficiency_index.observability import cluster_record_to_dict
-from tandemn_efficiency_index.prometheus.dcgm import DCGM_METRICS
+
+SMOKE_DCGM_METRICS = (
+    "DCGM_FI_DEV_GPU_UTIL",
+    "DCGM_FI_DEV_MEM_COPY_UTIL",
+    "DCGM_FI_DEV_FB_USED",
+    "DCGM_FI_DEV_FB_FREE",
+    "DCGM_FI_DEV_FB_RESERVED",
+    "DCGM_FI_DEV_POWER_USAGE",
+    "DCGM_FI_DEV_GPU_TEMP",
+    "DCGM_FI_DEV_SM_CLOCK",
+    "DCGM_FI_DEV_MEM_CLOCK",
+    "DCGM_FI_DEV_XID_ERRORS",
+    "DCGM_FI_PROF_GR_ENGINE_ACTIVE",
+    "DCGM_FI_PROF_SM_ACTIVE",
+    "DCGM_FI_PROF_SM_OCCUPANCY",
+    "DCGM_FI_PROF_PIPE_TENSOR_ACTIVE",
+    "DCGM_FI_PROF_DRAM_ACTIVE",
+    "DCGM_FI_PROF_PCIE_TX_BYTES",
+    "DCGM_FI_PROF_PCIE_RX_BYTES",
+    "DCGM_FI_PROF_NVLINK_TX_BYTES",
+    "DCGM_FI_PROF_NVLINK_RX_BYTES",
+)
 
 RUN_DURATION = timedelta(minutes=23, seconds=17)
 SAMPLE_INTERVAL_SECONDS = 10
@@ -279,7 +300,7 @@ def _add_gpu_series(
         "cluster": "customer-chatbot-prod",
         "job": "dcgm-exporter",
     }
-    for metric_name in DCGM_METRICS:
+    for metric_name in SMOKE_DCGM_METRICS:
         if _skip_metric(spec, gpu_number, metric_name):
             continue
         series = MetricSeries.create(metric_name, scope, labels)

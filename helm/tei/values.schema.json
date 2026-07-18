@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["replicaCount", "discovery", "observation", "prometheus", "database", "auth"],
+  "properties": {
+    "replicaCount": {"type": "integer", "const": 1},
+    "discovery": {
+      "type": "object",
+      "required": ["mode", "namespaces", "intervalSeconds"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["cluster", "namespaces"]},
+        "namespaces": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "intervalSeconds": {"type": "integer", "minimum": 1}
+      }
+    },
+    "observation": {
+      "type": "object",
+      "required": ["durationHours", "stateIntervalSeconds"],
+      "properties": {
+        "durationHours": {"type": "integer", "minimum": 1, "maximum": 24},
+        "stateIntervalSeconds": {"type": "integer", "minimum": 1}
+      }
+    },
+    "prometheus": {
+      "type": "object",
+      "required": ["enabled", "url", "timeoutSeconds", "stepSeconds"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "url": {"type": "string"},
+        "timeoutSeconds": {"type": "number", "exclusiveMinimum": 0},
+        "stepSeconds": {"type": "integer", "minimum": 1}
+      }
+    },
+    "database": {
+      "type": "object",
+      "required": ["existingSecret", "cleanupIntervalMinutes"],
+      "properties": {
+        "existingSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string"},
+            "key": {"type": "string", "minLength": 1}
+          }
+        },
+        "cleanupIntervalMinutes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "auth": {
+      "type": "object",
+      "required": ["bearerTokenSecret"],
+      "properties": {
+        "bearerTokenSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string"},
+            "key": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  }
+}

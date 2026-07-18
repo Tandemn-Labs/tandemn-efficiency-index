@@ -12,6 +12,7 @@
 #         "backend": "<vllm|sglang|trtllm>",
 #         "disaggregated": <bool>,
 #         "total_gpus": <int>,
+#         "declared_intent": <normalized-dgdr-intent-or-null>,
 #         "pod_selectors": [
 #             {
 #                 "runtime_instance": "<dgd-name>",
@@ -204,11 +205,12 @@ class DynamoWorkloadDetector:
                     runtime_state="active",
                     match_labels={
                         "nvidia.com/dynamo-graph-deployment-name": name,
-                        "nvidia.com/dynamo-component-type": "worker",
                     },
                     role_label="nvidia.com/dynamo-sub-component-type",
                 )
             ],
+            source_generation=_optional_integer(metadata.get("generation")),
+            source_resource_version=_text(metadata.get("resourceVersion")),
         )
 
     def _get(self, target: DynamoWorkloadTarget) -> dict[str, Any]:
@@ -412,3 +414,12 @@ def _integer(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _optional_integer(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

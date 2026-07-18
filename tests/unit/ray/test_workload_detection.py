@@ -63,9 +63,12 @@ applications:
             gpu_memory_utilization: 0.9
             enable_prefix_caching: true
           deployment_config:
+            max_ongoing_requests: 12
+            max_queued_requests: 50
             autoscaling_config:
               min_replicas: 1
               max_replicas: 4
+              target_ongoing_requests: 8
 """,
             "rayClusterConfig": {
                 "workerGroupSpecs": [
@@ -113,17 +116,39 @@ def test_fetches_target_and_parses_llm_configuration(ray_service: dict[str, Any]
     assert component.x["gpu_mem_util"] == 0.9
     assert component.x["prefix_cache_enabled"] is True
     assert component.x["max_replicas"] == 4
+    assert workload.declared_intent is not None
+    assert workload.declared_intent.model_id == "qwen"
+    assert workload.declared_intent.backend == "vllm"
+    assert workload.declared_intent.slo == {}
+    assert workload.declared_intent.components == [
+        {
+            "name": "llm-app",
+            "component_type": "llm",
+            "replicas": 1,
+            "max_ongoing_requests": 12,
+            "max_queued_requests": 50,
+            "autoscaling": {
+                "min_replicas": 1,
+                "max_replicas": 4,
+                "target_ongoing_requests": 8,
+            },
+        }
+    ]
     assert component.placement["accelerator_type"] == "L4"
     assert component.image == "rayproject/ray-llm:2.55.1-py312-gpu"
-    active, pending = workload.pod_selectors
+    active_head, active, pending_head, pending = workload.pod_selectors
+    assert active_head.match_labels["ray.io/node-type"] == "head"
     assert active.runtime_instance == "qwen-production-raycluster-active"
+    assert active.runtime_job_key == "qwen-production-raycluster-active"
     assert active.runtime_state == "active"
     assert active.match_labels == {
         "ray.io/cluster": "qwen-production-raycluster-active",
         "ray.io/node-type": "worker",
     }
     assert active.role_label == "ray.io/group"
+    assert pending_head.match_labels["ray.io/node-type"] == "head"
     assert pending.runtime_instance == "qwen-production-raycluster-pending"
+    assert pending.runtime_job_key == "qwen-production-raycluster-pending"
     assert pending.runtime_state == "pending"
     assert api.requested_versions == ["v1"]
 
@@ -149,6 +174,9 @@ def test_returns_same_json_shape_as_dynamo(ray_service: dict[str, Any]) -> None:
         "total_gpus",
         "components",
         "pod_selectors",
+        "declared_intent",
+        "source_generation",
+        "source_resource_version",
     }
 
 
@@ -165,7 +193,7 @@ def test_falls_back_to_v1alpha1(ray_service: dict[str, Any]) -> None:
     assert api.requested_versions == ["v1", "v1alpha1"]
 
 
-def test_rejects_multiple_models(ray_service: dict[str, Any]) -> None:
+def test_retains_multiple_models_in_one_ray_service(ray_service: dict[str, Any]) -> None:
     ray_service["spec"]["serveConfigV2"] = """
 applications:
   - name: two-models
@@ -176,8 +204,41 @@ applications:
 """
     detector = RayWorkloadDetector(FakeCustomObjectsApi([ray_service]))
 
-    with pytest.raises(ValueError, match="exactly one model"):
-        detector.detect([RayWorkloadTarget("inference", "qwen-production")])
+    workload = detector.detect([RayWorkloadTarget("inference", "qwen-production")])[
+        "ray:inference/qwen-production"
+    ]
+
+    assert workload.model_id == "model-a, model-b"
+    assert len(workload.components) == 2
+
+
+def test_parses_custom_serve_wrapper_with_explicit_model_settings(
+    ray_service: dict[str, Any],
+) -> None:
+    ray_service["spec"]["serveConfigV2"] = """
+applications:
+  - name: custom-vllm
+    import_path: company.serving.vllm:app
+    deployments:
+      - name: ModelDeployment
+        num_replicas: 2
+        ray_actor_options: {num_gpus: 2}
+        user_config:
+          model_id: Qwen/Qwen3-32B
+          backend: vllm
+          engine_kwargs: {tensor_parallel_size: 2}
+"""
+    detector = RayWorkloadDetector(FakeCustomObjectsApi([ray_service]))
+
+    workload = detector.detect([RayWorkloadTarget("inference", "qwen-production")])[
+        "ray:inference/qwen-production"
+    ]
+
+    assert workload.model_id == "Qwen/Qwen3-32B"
+    assert workload.backend == "vllm"
+    assert workload.total_gpus == 4
+    assert workload.components[0].replicas == 2
+    assert workload.components[0].gpus_per_replica == 2
 
 
 def test_parses_prefill_decode_as_two_components(ray_service: dict[str, Any]) -> None:

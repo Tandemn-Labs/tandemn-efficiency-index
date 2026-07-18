@@ -1,49 +1,54 @@
 # TEI observability dashboard
 
-The TEI observability layer presents the rolling `ClusterRecord` collected from Kubernetes and
-Prometheus. It is intentionally part of the Python package: the collector, snapshot API, and static
-dashboard can run in one Pod without a separate frontend service.
+The TEI observability layer generates a `ClusterRecord` report from separately managed Kubernetes
+state and Prometheus time series. It is intentionally part of the Python package: the collector,
+snapshot API, and static dashboard can run in one Pod without a separate frontend service.
 
 ```text
 Kubernetes CRDs ──> workload detection ─┐
-Kubernetes Pods ──> pod attribution ────┼──> ClusterObserver ──> rolling ClusterRecord
-Prometheus/DCGM + vLLM ──> metric collection ──┘                       │
-                                                                         v
-Browser <── static UI + /api/v1/snapshot <── ObservabilityServer + Runtime
+Kubernetes Pods ──> job-key attribution ┼──> PostgreSQL ObservationState
+                                        │                 │
+Prometheus time series ─────────────────┴──── range query ┤
+                                                          v
+                                                generated ClusterRecord
+                                                          │
+                                                snapshot API/browser
 ```
 
 ## Start the dashboard
 
-Create the observer from the exact Dynamo or Ray workloads being benchmarked, then give it to the
-observability server:
+Build the dependencies and install the Helm chart. Prometheus, dcgm-exporter, and PostgreSQL are
+bundled by default:
 
-```python
-from tandemn_efficiency_index.models.workload import WorkloadRuntime
-from tandemn_efficiency_index.observability import ObservabilityServer
-from tandemn_efficiency_index.observer import ClusterObserver
-from tandemn_efficiency_index.workload_detection import (
-    ClusterWorkloadDetector,
-    WorkloadTarget,
-)
-
-targets = [
-    WorkloadTarget(
-        runtime=WorkloadRuntime.DYNAMO,
-        namespace="inference",
-        name="qwen-benchmark",
-    ),
-]
-workloads = ClusterWorkloadDetector.from_in_cluster().detect(targets)
-observer = ClusterObserver.from_in_cluster(
-    prometheus_url="http://prometheus.monitoring.svc:9090",
-    workloads=workloads,
-)
-
-ObservabilityServer(observer, host="0.0.0.0", port=8000).serve_forever()
+```shell
+helm dependency build ./helm/tei
+helm install tei ./helm/tei \
+  --namespace tei-system \
+  --create-namespace \
+  --set image.repository=example.com/tandemn-efficiency-index \
+  --set image.tag=0.2.0
 ```
 
-The runtime collects immediately and then follows the observer's sample cadence. The browser
-refreshes the snapshot every ten seconds and supports 15-minute, 1-hour, 6-hour, and 24-hour views.
+Set `prometheus.enabled=false` and provide `prometheus.url` when the cluster already has a suitable
+Prometheus server. The bundled server retains 24 hours on a 20 GiB persistent volume and uses a
+ten-second scrape interval. Set `dcgmExporter.enabled=false` for an existing DCGM exporter, or
+`postgresql.enabled=false` plus `database.existingSecret.name` for an external PostgreSQL DSN.
+
+The runtime lists visible CRDs and workload instances immediately, caches supported CRD APIs, and
+reconciles workloads and Pods every ten seconds. New workloads are added without a restart. Removed
+workloads and historical Pod assignments remain in PostgreSQL for their observation. The browser
+supports 15-minute, 1-hour, 6-hour, and 24-hour views by querying Prometheus for that selected range.
+
+Cluster discovery uses the TEI ServiceAccount created by the chart. It requires read access to CRD
+definitions plus cluster-wide `get` and `list` access to DynamoGraphDeployments,
+DynamoGraphDeploymentRequests, RayServices, and Pods. Set `discovery.mode=namespaces` and populate
+`discovery.namespaces` to bind workload and Pod access only in selected namespaces.
+
+For DGDR-generated Dynamo jobs, each API workload contains a `declared_intent` object with
+normalized workload assumptions (`input_sequence_length`, `output_sequence_length`, request rate,
+and concurrency), latency SLOs, and requested hardware. Ray jobs use the same object for explicit
+per-component replica, queue, concurrency, and autoscaling controls; RayService does not provide
+DGDR-style TTFT or ITL targets, so its `slo` mapping remains empty.
 
 ## API
 
@@ -53,25 +58,34 @@ grouped by attribution failure reason.
 
 Query parameters:
 
-- `window_seconds`: sample window ending at `updated_at`; use `0` for the whole retained window.
+- `window_seconds`: sample window ending at `updated_at`; use `0` for the whole retained window;
+  non-zero values cannot exceed 86,400 seconds.
 - `max_points`: maximum points returned per series. The first and last values plus bucket minima and
-  maxima are retained so brief spikes and dips survive downsampling.
+  maxima are retained so brief spikes and dips survive downsampling. The accepted range is 2–2,000.
 
-The default response is one hour with at most 180 points per series. This keeps the live payload
-bounded even when the in-memory observer retains 24 hours of ten-second samples.
+The default response is one hour with at most 180 points per series. PostgreSQL contains no
+Prometheus samples; downsampling only bounds the generated response payload.
+
+`GET /api/v1/status` reports collection, Prometheus, and storage state. `/healthz` checks only the
+process and collection thread; `/readyz` additionally requires successful Kubernetes discovery,
+Prometheus reachability, and writable PostgreSQL. Configure `auth.bearerTokenSecret` to require a
+bearer token for `/api/*`; probe routes remain unauthenticated.
 
 ## Prometheus attribution contract
 
-TEI polls Prometheus range queries every ten seconds. DCGM series are joined to worker Pods through
-the `exported_pod` label produced when dcgm-exporter Kubernetes PodResources attribution is enabled.
-The scrape's `pod` label identifies the exporter Pod and must not be treated as the GPU owner. Set
-`DCGM_EXPORTER_KUBERNETES=true` and preserve the owner as `exported_pod` during Prometheus relabeling.
+TEI runs Prometheus range queries when a report is requested. DCGM series are joined to worker Pods
+through the `exported_pod` label produced when dcgm-exporter Kubernetes PodResources attribution is
+enabled. The scrape's `pod` label identifies the exporter Pod and must not be treated as the GPU
+owner. Set `DCGM_EXPORTER_KUBERNETES=true` and preserve the owner as `exported_pod` during
+Prometheus relabeling.
 
-vLLM latency, throughput, queue, KV-cache, token-length, and prefill/decode metrics are queried once
-per currently running worker with `pod="<worker-pod-name>"`. Historical Pods remain in the cluster
-record for reporting but are not queried after they disappear. Empty, `NaN`, and infinite samples
-are ignored. Config-gated DCGM metrics such as NVLink remain listed as missing when Prometheus does
-not expose them, without preventing other metrics from being collected in the same tick.
+TEI runs one bounded raw query for DCGM and the vLLM, SGLang, Dynamo, and Ray Serve families, then
+eight PromQL normalization queries for p99 TTFT/TPOT, request and token throughput, queue/load, and
+KV-cache usage. Returned series are attributed using DCGM's `exported_pod` ownership labels, direct
+`(namespace, pod)` identity, or a Pod UID when available. The Pod assignment contributes the DGD
+name for Dynamo or generated RayCluster name for Ray as `runtime_job_key`; every attributed metric
+scope therefore links Prometheus back to the normalized workload. Series without a recognized Pod
+identity remain visible as unattributed telemetry. Empty, `NaN`, and infinite samples are ignored.
 
 ## UI mapping
 
@@ -90,9 +104,10 @@ The main performance grid contains only signals that explain workload efficiency
 The operational-health rail keeps maximum GPU temperature, aggregate PCIe traffic, XID state, and
 displayed-signal availability visible without allocating full charts to them. The worker frame maps
 GPU count, utilization, framebuffer pressure, and freshness back to each attributed Pod. A telemetry
-coverage table exposes every configured DCGM metric, including framebuffer reservation, clocks,
-graphics and DRAM activity, PCIe, and NVLink. It reports expected versus reporting GPUs, series and
-sample counts, value ranges, freshness, and complete/partial/missing state.
+coverage table exposes the required DCGM profile and reports expected versus reporting GPUs, series
+and sample counts, freshness, and complete/partial/missing state. Optional raw DCGM signals such as
+framebuffer reservation, SM occupancy, or NVLink remain visible when the exporter/GPU supports
+them. Normalized inference coverage is reported separately.
 
 Expandable diagnostic frames expose normalized component configuration, GPU and MIG scope,
 Prometheus labels, source Pod identity, attribution method, and unattributed series.

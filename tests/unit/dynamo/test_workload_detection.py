@@ -102,10 +102,10 @@ def test_fetches_target_and_parses_configuration(dgd: dict[str, Any]) -> None:
     assert worker.total_gpus == 4
     selector = workload.pod_selectors[0]
     assert selector.runtime_instance == "qwen-production"
+    assert selector.runtime_job_key == "qwen-production"
     assert selector.runtime_state == "active"
     assert selector.match_labels == {
         "nvidia.com/dynamo-graph-deployment-name": "qwen-production",
-        "nvidia.com/dynamo-component-type": "worker",
     }
     assert selector.role_label == "nvidia.com/dynamo-sub-component-type"
     assert api.requested_versions == ["v1beta1", "v1alpha1"]

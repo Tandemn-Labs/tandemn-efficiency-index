@@ -1,6 +1,8 @@
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from tandemn_efficiency_index.models.cluster_snapshot import WorkloadPod
 from tandemn_efficiency_index.models.telemetry import (
     ClusterTelemetry,
@@ -11,6 +13,7 @@ from tandemn_efficiency_index.models.telemetry import (
 )
 from tandemn_efficiency_index.models.workload import Workload, WorkloadRuntime
 from tandemn_efficiency_index.observer import ClusterObserver
+from tandemn_efficiency_index.prometheus.client import PrometheusQueryError
 
 
 class FakePodCollector:
@@ -23,11 +26,13 @@ class FakePodCollector:
         return dict(known_pods or {})
 
 
-class FakeDcgmCollector:
+class FakePrometheusCollector:
     def __init__(self, series: MetricSeries, timestamp: datetime) -> None:
         self.series = series
         self.timestamp = timestamp
         self.emit = True
+        self.calls = 0
+        self.ready_checks = 0
 
     def collect(
         self,
@@ -35,6 +40,7 @@ class FakeDcgmCollector:
         end: datetime,
         pods: Mapping[str, WorkloadPod],
     ) -> ClusterTelemetry:
+        self.calls += 1
         if not self.emit:
             return ClusterTelemetry()
         batch_series = MetricSeries(
@@ -55,8 +61,39 @@ class FakeDcgmCollector:
             }
         )
 
+    def check_ready(self, at: datetime) -> None:
+        self.ready_checks += 1
 
-def test_observer_deduplicates_overlapping_ten_second_queries() -> None:
+
+class EmptyPrometheusCollector:
+    def check_ready(self, at: datetime) -> None:
+        pass
+
+    def collect(
+        self,
+        start: datetime,
+        end: datetime,
+        pods: Mapping[str, WorkloadPod],
+    ) -> ClusterTelemetry:
+        return ClusterTelemetry()
+
+
+class UnavailablePrometheusCollector(EmptyPrometheusCollector):
+    def check_ready(self, at: datetime) -> None:
+        raise PrometheusQueryError("connection refused")
+
+
+class FakeWorkloadDiscovery:
+    def __init__(self, workloads: dict[str, Workload]) -> None:
+        self.workloads = workloads
+        self.calls = 0
+
+    def discover(self) -> dict[str, Workload]:
+        self.calls += 1
+        return dict(self.workloads)
+
+
+def test_observer_queries_prometheus_only_for_live_snapshot_windows() -> None:
     now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
     workload = Workload(
         runtime=WorkloadRuntime.DYNAMO,
@@ -81,24 +118,88 @@ def test_observer_deduplicates_overlapping_ten_second_queries() -> None:
             gpu_index="0",
         ),
     )
-    dcgm_collector = FakeDcgmCollector(series, now)
+    prometheus_collector = FakePrometheusCollector(series, now)
     observer = ClusterObserver(
         workloads={workload.workload_id: workload},
         pod_collector=FakePodCollector(),
-        dcgm_collector=dcgm_collector,
+        prometheus_collector=prometheus_collector,
         started_at=now,
     )
 
-    first_record = observer.collect_tick(now)
-    record = observer.collect_tick(now + timedelta(seconds=10))
-    dcgm_collector.timestamp = now + timedelta(seconds=20)
+    state_record = observer.collect_tick(now)
+    observer.collect_tick(now + timedelta(seconds=10))
+    prometheus_collector.timestamp = now + timedelta(seconds=20)
     observer.collect_tick(now + timedelta(seconds=20))
-    dcgm_collector.emit = False
     observer.collect_tick(now + timedelta(seconds=30))
-    stored_series = record.jobs[workload.workload_id].telemetry.series[series.series_id]
+    assert prometheus_collector.calls == 0
+    assert not hasattr(state_record.jobs[workload.workload_id], "telemetry")
 
-    assert record is first_record
-    assert record.sample_interval_seconds == 10
-    assert len(stored_series.samples) == 2
-    assert stored_series.samples[0].value == 42.0
-    assert stored_series.samples[1].timestamp == now + timedelta(seconds=20)
+    live_record = observer.live_record(30, now + timedelta(seconds=30))
+    stored_series = live_record.jobs[workload.workload_id].telemetry.series[series.series_id]
+
+    assert prometheus_collector.calls == 1
+    assert live_record.sample_interval_seconds == 10
+    assert [sample.value for sample in stored_series.samples] == [42.0]
+    assert stored_series.samples[0].timestamp == now + timedelta(seconds=20)
+    assert not hasattr(state_record.jobs[workload.workload_id], "telemetry")
+
+
+def test_observer_reconciles_discovered_workloads_on_refresh_interval() -> None:
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+    workload = _workload("qwen", "dgd-uid")
+    discovery = FakeWorkloadDiscovery({workload.workload_id: workload})
+    observer = ClusterObserver(
+        workloads={},
+        pod_collector=FakePodCollector(),
+        prometheus_collector=EmptyPrometheusCollector(),
+        workload_discovery=discovery,
+        discovery_interval=timedelta(seconds=60),
+        started_at=now,
+    )
+
+    record = observer.collect_tick(now)
+    observer.collect_tick(now + timedelta(seconds=10))
+
+    assert discovery.calls == 1
+    assert record.jobs[workload.workload_id].active is True
+
+    discovery.workloads = {}
+    observer.collect_tick(now + timedelta(seconds=60))
+
+    assert discovery.calls == 2
+    assert record.jobs[workload.workload_id].active is False
+    assert record.jobs[workload.workload_id].removed_at == now + timedelta(seconds=60)
+
+
+def test_observer_is_not_ready_when_prometheus_check_fails() -> None:
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+    workload = _workload("qwen", "dgd-uid")
+    observer = ClusterObserver(
+        workloads={workload.workload_id: workload},
+        pod_collector=FakePodCollector(),
+        prometheus_collector=UnavailablePrometheusCollector(),
+        started_at=now,
+    )
+
+    with pytest.raises(PrometheusQueryError, match="connection refused"):
+        observer.collect_tick(now)
+
+    status = observer.status()
+    assert status["ready"] is False
+    assert status["last_prometheus_check_at"] is None
+    assert status["last_collection_error"] == "connection refused"
+
+
+def _workload(name: str, uid: str) -> Workload:
+    return Workload(
+        runtime=WorkloadRuntime.DYNAMO,
+        namespace="inference",
+        name=name,
+        uid=uid,
+        api_version="nvidia.com/v1beta1",
+        model_id=name,
+        backend="vllm",
+        disaggregated=False,
+        total_gpus=1,
+        components=[],
+    )

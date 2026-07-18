@@ -9,25 +9,57 @@
   <body>
     <main class="dashboard-shell">
       <header class="page-header">
-        <div>
+        <div class="brand-block">
           <p>Tandemn Efficiency Index</p>
           <h1>Live telemetry</h1>
+          <div id="globalWorkloadControl" class="global-workload-control"></div>
         </div>
         <div class="header-status">
-          <div class="live-state" id="liveState">
-            <span></span>
-            <strong>Connecting</strong>
-          </div>
           <p id="lastUpdated">Waiting for the first sample</p>
           <button id="refreshButton" type="button">Refresh</button>
         </div>
       </header>
 
-      <div class="notice" id="notice" role="status" hidden></div>
+      <div class="app-layout">
+        <aside class="section-sidebar" aria-label="Dashboard sections">
+          <nav class="section-nav">
+            <button class="active" type="button" data-section="overview" aria-current="page">Overview</button>
+            <button type="button" data-section="performance">Performance</button>
+            <button type="button" data-section="coverage">Telemetry coverage</button>
+            <button type="button" data-section="health">Operational health</button>
+            <button type="button" data-section="workers">Attributed workers</button>
+          </nav>
+        </aside>
 
-      <section class="run-context" id="runContext" aria-label="Observed workload"></section>
+        <div class="dashboard-content">
+          <div class="notice" id="notice" role="status" hidden></div>
 
-      <section class="dashboard-section" aria-labelledby="performanceTitle">
+      <section class="top-summary dashboard-view" data-view="overview" aria-labelledby="workloadOverviewTitle">
+        <div class="top-summary-heading">
+          <div>
+            <h2 id="workloadOverviewTitle">Workload overview</h2>
+            <p>Selected workload · live state and telemetry</p>
+          </div>
+        </div>
+        <section class="run-context" id="runContext" aria-label="Observed workload"></section>
+
+        <section class="overview-frame" aria-labelledby="overviewTitle">
+          <div class="frame-heading overview-heading">
+            <div>
+              <h2 id="overviewTitle">At a glance</h2>
+              <p>Latest observed state</p>
+            </div>
+            <span class="overview-window">Selected window · <strong id="overviewWindow">1h</strong></span>
+          </div>
+          <div class="overview-layout">
+            <div class="state-panel" id="statePanel"></div>
+            <div class="overview-metrics" id="overviewMetrics"></div>
+          </div>
+          <div class="signal-strip" id="signalStrip" aria-label="Headline signal status"></div>
+        </section>
+      </section>
+
+      <section class="dashboard-section dashboard-view" data-view="performance" aria-labelledby="performanceTitle" hidden>
         <div class="section-heading">
           <div>
             <h2 id="performanceTitle">Performance</h2>
@@ -46,7 +78,7 @@
         </p>
       </section>
 
-      <section class="diagnostics-frame" aria-labelledby="diagnosticsTitle">
+      <section class="diagnostics-frame dashboard-view" data-view="coverage" aria-labelledby="diagnosticsTitle" hidden>
         <div class="frame-heading diagnostics-heading">
           <div>
             <h2 id="diagnosticsTitle">Telemetry coverage</h2>
@@ -60,7 +92,7 @@
         <div class="diagnostic-list" id="diagnosticList"></div>
       </section>
 
-      <section class="health-frame" aria-labelledby="healthTitle">
+      <section class="health-frame dashboard-view" data-view="health" aria-labelledby="healthTitle" hidden>
         <div class="frame-heading">
           <h2 id="healthTitle">Operational health</h2>
           <p>Latest cluster safety and transport signals</p>
@@ -68,7 +100,7 @@
         <div class="health-grid" id="healthGrid"></div>
       </section>
 
-      <section class="worker-frame" aria-labelledby="workersTitle">
+      <section class="worker-frame dashboard-view" data-view="workers" aria-labelledby="workersTitle" hidden>
         <div class="frame-heading worker-frame-heading">
           <div>
             <h2 id="workersTitle">Attributed workers</h2>
@@ -88,20 +120,8 @@
         <div class="worker-list" id="workerList"></div>
       </section>
 
-      <section class="details-grid" aria-label="Raw telemetry details">
-        <details class="detail-frame" open>
-          <summary>Workload configuration</summary>
-          <div id="workloadDetails"></div>
-        </details>
-        <details class="detail-frame">
-          <summary>GPU scope and Prometheus labels</summary>
-          <div id="scopeDetails"></div>
-        </details>
-        <details class="detail-frame">
-          <summary>Unattributed telemetry</summary>
-          <div id="attributionDetails"></div>
-        </details>
-      </section>
+        </div>
+      </div>
     </main>
 
     <script type="module" src="./app.js"></script>

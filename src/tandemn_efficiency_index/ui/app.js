@@ -84,6 +84,7 @@ const state = {
   selectedWorkloadId: null,
   windowSeconds: 3600,
   loading: false,
+  apiToken: sessionStorage.getItem("teiApiToken"),
 };
 
 bindControls();
@@ -91,6 +92,9 @@ loadSnapshot();
 
 function bindControls() {
   document.querySelector("#refreshButton").addEventListener("click", loadSnapshot);
+  document.querySelectorAll("[data-section]").forEach((button) => {
+    button.addEventListener("click", () => showSection(button.dataset.section));
+  });
   document.querySelectorAll("[data-window]").forEach((button) => {
     button.addEventListener("click", () => {
       state.windowSeconds = Number(button.dataset.window);
@@ -102,15 +106,25 @@ function bindControls() {
   });
 }
 
+function showSection(sectionName) {
+  document.querySelectorAll("[data-view]").forEach((section) => {
+    section.hidden = section.dataset.view !== sectionName;
+  });
+  document.querySelectorAll("[data-section]").forEach((button) => {
+    const active = button.dataset.section === sectionName;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
 async function loadSnapshot() {
   if (state.loading) return;
   state.loading = true;
   document.querySelector("#refreshButton").disabled = true;
   try {
-    const response = await fetch(
-      `./api/v1/snapshot?window_seconds=${state.windowSeconds}&max_points=180`,
-      { cache: "no-store" },
-    );
+    const response = await fetchSnapshot();
     if (!response.ok) throw new Error(`Snapshot request failed with ${response.status}`);
     state.snapshot = await response.json();
     const jobs = state.snapshot.jobs || [];
@@ -121,28 +135,149 @@ async function loadSnapshot() {
     hideNotice();
   } catch (error) {
     showNotice("Telemetry is unavailable. The collector will retry on its next interval.");
-    setLiveState("Unavailable", "danger");
   } finally {
     state.loading = false;
     document.querySelector("#refreshButton").disabled = false;
   }
 }
 
+async function fetchSnapshot() {
+  const url = `./api/v1/snapshot?window_seconds=${state.windowSeconds}&max_points=720`;
+  const headers = state.apiToken ? { Authorization: `Bearer ${state.apiToken}` } : {};
+  let response = await fetch(url, { cache: "no-store", headers });
+  if (response.status !== 401) return response;
+
+  const token = window.prompt("Enter the TEI API bearer token");
+  if (!token) return response;
+  state.apiToken = token;
+  sessionStorage.setItem("teiApiToken", token);
+  response = await fetch(url, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return response;
+}
+
 function render() {
   renderHeader();
+  renderGlobalWorkloadControl();
   renderRunContext();
+  renderOverview();
   renderMetrics();
   renderHealth();
   renderWorkers();
   renderDiagnostics();
-  renderDetails();
+}
+
+function renderGlobalWorkloadControl() {
+  const container = document.querySelector("#globalWorkloadControl");
+  const jobs = state.snapshot.jobs || [];
+  if (!jobs.length) {
+    container.innerHTML = "";
+    return;
+  }
+  const canSwitchWorkload = jobs.length > 1;
+  container.innerHTML = `
+    <label class="workload-control">
+      <select id="workloadSelect" aria-label="Observing workload" ${canSwitchWorkload ? "" : "disabled"}>
+        ${jobs.map((item) => `
+          <option value="${escapeHtml(item.workload_id)}" ${item.workload_id === state.selectedWorkloadId ? "selected" : ""}>
+            ${escapeHtml(item.workload.name)} · ${escapeHtml(item.workload.namespace)}
+          </option>
+        `).join("")}
+      </select>
+      <span class="dropdown-icon" aria-hidden="true">⌄</span>
+    </label>
+  `;
+  container.querySelector("#workloadSelect").addEventListener("change", (event) => {
+    state.selectedWorkloadId = event.target.value;
+    render();
+  });
+}
+
+function renderOverview() {
+  const job = selectedJob();
+  const statePanel = document.querySelector("#statePanel");
+  const metrics = document.querySelector("#overviewMetrics");
+  const signalStrip = document.querySelector("#signalStrip");
+  document.querySelector("#overviewWindow").textContent = windowLabel(state.windowSeconds);
+
+  if (!job) {
+    statePanel.innerHTML = emptyState("No workload state is available.");
+    metrics.innerHTML = "";
+    signalStrip.innerHTML = "";
+    return;
+  }
+
+  const coverage = job.coverage || { status: "missing", expected_gpu_count: 0, observed_gpu_count: 0 };
+  const freshWorkers = (job.workers || []).filter((worker) =>
+    secondsSince(worker.last_seen_at) <= state.snapshot.sample_interval_seconds * 3,
+  ).length;
+  const attentionSignals = PRIMARY_METRICS.filter((metric) => {
+    const sourceNames = metric.sourceNames || [metric.name];
+    const series = sourceNames.flatMap((name) => groupSeries(job.telemetry.series).get(name) || []);
+    const points = metric.name === "TEI_GPU_MEMORY_PRESSURE"
+      ? memoryPressureSeries(groupSeries(job.telemetry.series))
+      : aggregateSeries(series, metric.mode);
+    return ["attention", "watch"].includes(evaluateBenchmark(metric.benchmark, points.at(-1)?.value).tone);
+  });
+  const hasXidErrors = latestValues(job, "DCGM_FI_DEV_XID_ERRORS").some((value) => value !== 0);
+  const tone = hasXidErrors || coverage.status === "missing"
+    ? "danger"
+    : coverage.status === "partial" || attentionSignals.length
+      ? "warning"
+      : "success";
+  const label = tone === "success" ? "Healthy" : tone === "warning" ? "Watch" : "Needs attention";
+  const detail = hasXidErrors
+    ? "A GPU device error is present in the latest sample."
+    : coverage.status !== "complete"
+      ? "Some expected telemetry is not reporting in this window."
+      : attentionSignals.length
+        ? `${attentionSignals.length} headline ${plural("signal", attentionSignals.length)} outside the directional band.`
+        : "Headline signals are within the directional bands.";
+
+  statePanel.innerHTML = `
+    <div>
+      <span class="eyebrow">Current state</span>
+      <h3 class="status-text ${tone}">${label}</h3>
+      <p>${escapeHtml(detail)}</p>
+    </div>
+  `;
+  metrics.innerHTML = [
+    overviewMetric("GPU fleet", `${coverage.observed_gpu_count || 0} / ${coverage.expected_gpu_count || 0}`, "observed / configured"),
+    overviewMetric("Workers reporting", `${freshWorkers} / ${job.workers.length}`, "fresh in this sample"),
+    overviewMetric("Data coverage", `${coverage.status === "complete" ? "100" : coverage.status === "partial" ? "Partial" : "0"}${coverage.status === "complete" ? "%" : ""}`, `${coverage.metrics?.length || 0} configured signals`),
+    overviewMetric("Signals to watch", formatNumber(attentionSignals.length), attentionSignals.length ? attentionSignals.map((metric) => metric.label).join(" · ") : "None in headline view"),
+  ].join("");
+  signalStrip.innerHTML = PRIMARY_METRICS.map((metric) => {
+    const sourceNames = metric.sourceNames || [metric.name];
+    const byMetric = groupSeries(job.telemetry.series);
+    const series = sourceNames.flatMap((name) => byMetric.get(name) || []);
+    const points = metric.name === "TEI_GPU_MEMORY_PRESSURE"
+      ? memoryPressureSeries(byMetric)
+      : aggregateSeries(series, metric.mode);
+    const latest = points.at(-1)?.value ?? null;
+    const benchmark = evaluateBenchmark(metric.benchmark, latest);
+    const fill = latest === null ? 0 : Math.max(4, Math.min(100, metric.mode === "percent" || metric.mode === "ratio" ? latest : 50));
+    return `<div class="signal-item">
+      <div><span>${escapeHtml(metric.label)}</span><strong class="status-text ${benchmark.tone}">${formatMetricValue(latest, metric.mode)}</strong></div>
+      <div class="signal-track"><span class="signal-fill ${benchmark.tone}" style="--signal-fill: ${fill}%"></span></div>
+    </div>`;
+  }).join("");
+}
+
+function overviewMetric(label, value, detail) {
+  return `<div class="overview-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><p>${escapeHtml(detail)}</p></div>`;
+}
+
+function windowLabel(seconds) {
+  if (seconds === 900) return "15m";
+  if (seconds === 21600) return "6h";
+  if (seconds === 86400) return "24h";
+  return "1h";
 }
 
 function renderHeader() {
-  const freshness = secondsSince(state.snapshot.updated_at);
-  const staleAfter = state.snapshot.sample_interval_seconds * 3;
-  const isLive = freshness <= staleAfter;
-  setLiveState(isLive ? "Live" : "Delayed", isLive ? "success" : "warning");
   document.querySelector("#lastUpdated").textContent = `Last sample ${relativeTime(state.snapshot.updated_at)}`;
 }
 
@@ -156,24 +291,9 @@ function renderRunContext() {
 
   const workload = job.workload;
   const topology = workload.disaggregated ? "Disaggregated" : "Aggregated";
-  const selector = state.snapshot.jobs.length > 1
-    ? `
-      <label class="workload-control">
-        <span>Workload</span>
-        <select id="workloadSelect">
-          ${state.snapshot.jobs.map((item) => `
-            <option value="${escapeHtml(item.workload_id)}" ${item.workload_id === job.workload_id ? "selected" : ""}>
-              ${escapeHtml(item.workload.name)}
-            </option>
-          `).join("")}
-        </select>
-      </label>
-    `
-    : "";
-
   container.innerHTML = `
     <div class="run-identity">
-      <span>${escapeHtml(workload.runtime)} · ${escapeHtml(workload.namespace)}</span>
+      <span class="observing-kicker">Now observing · ${escapeHtml(workload.runtime)} · ${escapeHtml(workload.namespace)}</span>
       <h2>${escapeHtml(workload.name)}</h2>
       <p>${escapeHtml(workload.model_id)}</p>
     </div>
@@ -183,16 +303,7 @@ function renderRunContext() {
       ${fact("Configured GPUs", formatNumber(workload.total_gpus))}
       ${fact("Worker pods", formatNumber(job.workers.length))}
     </div>
-    ${selector}
   `;
-
-  const select = document.querySelector("#workloadSelect");
-  if (select) {
-    select.addEventListener("change", () => {
-      state.selectedWorkloadId = select.value;
-      render();
-    });
-  }
 }
 
 function renderMetrics() {
@@ -326,7 +437,17 @@ function renderDiagnostics() {
     <span>${coverage.observed_gpu_count || 0} observed / ${coverage.expected_gpu_count || 0} expected GPUs</span>
   `;
 
-  container.innerHTML = DIAGNOSTIC_METRICS.map((metric) => {
+  const metricNames = [...new Set([
+    ...job.telemetry.series.map((series) => series.metric_name),
+    ...coverage.metrics.map((metric) => metric.metric_name),
+  ])].sort();
+
+  container.innerHTML = metricNames.map((metricName) => {
+    const metric = DIAGNOSTIC_METRICS.find((item) => item.name === metricName) || {
+      name: metricName,
+      label: metricName,
+      mode: "number",
+    };
     const series = byMetric.get(metric.name) || [];
     const values = series.flatMap((item) => item.samples.map((sample) => scaleValue(sample.value, metric.mode)));
     const latest = latestAverage(series, metric.name, metric.mode);
@@ -341,95 +462,19 @@ function renderDiagnostics() {
     const valueRange = values.length
       ? `${formatMetricValue(Math.min(...values), metric.mode)} – ${formatMetricValue(Math.max(...values), metric.mode)}`
       : "n/a";
+    const scopeCount = new Set(series.map((item) => JSON.stringify(item.scope))).size;
+    const sampleCount = series.reduce((count, item) => count + item.samples.length, 0);
     return `
       <div class="diagnostic-row">
         <div><strong>${escapeHtml(metric.label)}</strong><span>${escapeHtml(metric.name)}</span></div>
-        <div><strong>${formatMetricValue(latest, metric.mode)}</strong><span>Latest GPU average</span></div>
+        <div><strong>${formatMetricValue(latest, metric.mode)}</strong><span>Latest average</span></div>
         <div><strong>${valueRange}</strong><span>Window range</span></div>
-        <div><strong>${coverageMetric.reporting_gpu_count} / ${coverageMetric.expected_gpu_count}</strong><span>Reporting GPUs</span></div>
-        <div><strong>${formatNumber(coverageMetric.sample_count)}</strong><span>${coverageMetric.series_count} ${plural("series", coverageMetric.series_count)}</span></div>
-        <div><strong class="status-text ${coverageTone(coverageMetric.status)}">${escapeHtml(capitalize(coverageMetric.status))}</strong><span>${coverageMetric.latest_sample_at ? relativeTime(coverageMetric.latest_sample_at) : "No samples"}</span></div>
+        <div><strong>${formatNumber(scopeCount)}</strong><span>Scopes</span></div>
+        <div><strong>${formatNumber(sampleCount)}</strong><span>${series.length} ${plural("series", series.length)}</span></div>
+        <div><strong class="status-text ${series.length ? "success" : "danger"}">${series.length ? "Reporting" : "Missing"}</strong><span>${coverageMetric.latest_sample_at ? relativeTime(coverageMetric.latest_sample_at) : "No samples"}</span></div>
       </div>
     `;
   }).join("");
-}
-
-function renderDetails() {
-  const job = selectedJob();
-  const workloadContainer = document.querySelector("#workloadDetails");
-  const scopeContainer = document.querySelector("#scopeDetails");
-  const attributionContainer = document.querySelector("#attributionDetails");
-  if (!job) {
-    workloadContainer.innerHTML = emptyState("No workload configuration is available.");
-    scopeContainer.innerHTML = emptyState("No GPU scopes are available.");
-  } else {
-    workloadContainer.innerHTML = workloadDetails(job.workload);
-    scopeContainer.innerHTML = scopeDetails(job.telemetry.series);
-  }
-  attributionContainer.innerHTML = attributionDetails();
-}
-
-function workloadDetails(workload) {
-  const components = workload.components || [];
-  return `
-    <div class="detail-facts">
-      ${detailFact("Workload UID", workload.uid || "n/a")}
-      ${detailFact("API version", workload.api_version)}
-      ${detailFact("Pod selectors", formatNumber((workload.pod_selectors || []).length))}
-      ${detailFact("Components", formatNumber(components.length))}
-    </div>
-    <div class="component-list">
-      ${components.map((component) => `
-        <div class="component-row">
-          <div><strong>${escapeHtml(component.name)}</strong><span>${escapeHtml(component.component_type)}</span></div>
-          <div><strong>${formatNumber(component.replicas)}</strong><span>Replicas</span></div>
-          <div><strong>${formatNumber(component.gpus_per_replica)}</strong><span>GPUs / replica</span></div>
-          <div><strong>${escapeHtml(component.image || "n/a")}</strong><span>Image</span></div>
-          <details><summary>Engine and placement</summary><pre>${escapeHtml(JSON.stringify({ placement: component.placement, characteristics: component.x }, null, 2))}</pre></details>
-        </div>
-      `).join("")}
-    </div>
-  `;
-}
-
-function scopeDetails(series) {
-  const scopes = new Map();
-  series.forEach((item) => {
-    const scope = item.scope;
-    if (!scope.gpu_uuid && !scope.gpu_index) return;
-    const key = [scope.gpu_uuid, scope.node_name, scope.gpu_index, scope.gpu_instance_id, scope.pod_uid, scope.container_name].join(":");
-    if (!scopes.has(key)) scopes.set(key, { scope, labels: item.labels });
-  });
-  if (!scopes.size) return emptyState("No GPU-scoped series are available.");
-  return [...scopes.values()].map(({ scope, labels }) => `
-    <div class="scope-row">
-      <div><strong>${escapeHtml(scope.gpu_uuid || `GPU ${scope.gpu_index}`)}</strong><span>Index ${escapeHtml(scope.gpu_index || "n/a")} · MIG ${escapeHtml(scope.gpu_instance_id || "n/a")}</span></div>
-      <div><strong>${escapeHtml(scope.pod_name || scope.pod_uid || "Unattributed")}</strong><span>${escapeHtml(scope.pod_namespace || "n/a")} · ${escapeHtml(scope.container_name || "n/a")}</span></div>
-      <div><strong>${escapeHtml(scope.node_name || "Unknown node")}</strong><span>${escapeHtml(scope.attribution_method || "unknown attribution")}</span></div>
-      <pre>${escapeHtml(JSON.stringify(labels))}</pre>
-    </div>
-  `).join("");
-}
-
-function attributionDetails() {
-  const attribution = state.snapshot.attribution || { unattributed_series_count: 0, reasons: {} };
-  const series = state.snapshot.unattributed_telemetry?.series || [];
-  if (!series.length) return '<p class="detail-empty status-text success">All reporting series are attributed.</p>';
-  return `
-    <p class="detail-empty status-text warning">${attribution.unattributed_series_count} unattributed ${plural("series", attribution.unattributed_series_count)}</p>
-    ${series.map((item) => `
-      <div class="scope-row">
-        <div><strong>${escapeHtml(item.metric_name)}</strong><span>${formatNumber(item.samples.length)} samples</span></div>
-        <div><strong>${escapeHtml(item.scope.pod_name || item.scope.pod_uid || "No pod identity")}</strong><span>${escapeHtml(item.scope.pod_namespace || "No namespace")}</span></div>
-        <div><strong>${escapeHtml(item.scope.gpu_uuid || `GPU ${item.scope.gpu_index || "n/a"}`)}</strong><span>${escapeHtml(item.scope.node_name || "Unknown node")}</span></div>
-        <div><strong class="status-text warning">${escapeHtml(item.scope.attribution_method || "unattributed_unknown")}</strong></div>
-      </div>
-    `).join("")}
-  `;
-}
-
-function detailFact(label, value) {
-  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
 function coverageTone(status) {
@@ -718,12 +763,6 @@ function emptyState(message) {
 
 function emptyChart(message) {
   return `<div class="empty-chart"><span></span><p>${escapeHtml(message)}</p></div>`;
-}
-
-function setLiveState(label, tone) {
-  const element = document.querySelector("#liveState");
-  element.className = `live-state ${tone}`;
-  element.querySelector("strong").textContent = label;
 }
 
 function showNotice(message) {

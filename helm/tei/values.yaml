@@ -1,0 +1,200 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/tandemn-labs/tandemn-efficiency-index
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+
+discovery:
+  mode: cluster
+  namespaces: []
+  intervalSeconds: 10
+
+observation:
+  durationHours: 24
+  stateIntervalSeconds: 10
+
+prometheus:
+  enabled: true
+  url: ""
+  timeoutSeconds: 5
+  stepSeconds: 10
+  bearerTokenSecret:
+    name: ""
+    key: token
+  tls:
+    caSecretName: ""
+    caSecretKey: ca.crt
+    insecureSkipVerify: false
+  server:
+    name: server
+    global:
+      scrape_interval: 10s
+      evaluation_interval: 10s
+    retention: 24h
+    service:
+      servicePort: 80
+    persistentVolume:
+      enabled: true
+      size: 20Gi
+  alertmanager:
+    enabled: false
+  kube-state-metrics:
+    enabled: false
+  prometheus-node-exporter:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+  scrapeConfigs:
+    kubernetes-api-servers:
+      enabled: false
+    kubernetes-nodes:
+      enabled: false
+    kubernetes-nodes-cadvisor:
+      enabled: true
+    kubernetes-service-endpoints:
+      enabled: true
+    kubernetes-service-endpoints-slow:
+      enabled: false
+    prometheus-pushgateway:
+      enabled: false
+    kubernetes-services:
+      enabled: false
+    kubernetes-pods:
+      enabled: true
+    kubernetes-pods-slow:
+      enabled: false
+  extraScrapeConfigs: |
+    - job_name: tei-dcgm-exporter
+      honor_labels: false
+      kubernetes_sd_configs:
+        - role: endpointslice
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          action: keep
+          regex: .*dcgm-exporter.*
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          target_label: pod
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: node
+    - job_name: tei-dynamo-components
+      honor_labels: false
+      kubernetes_sd_configs:
+        - role: pod
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_nvidia_com_metrics_enabled]
+          action: keep
+          regex: "true"
+        - source_labels: [__meta_kubernetes_pod_phase]
+          action: keep
+          regex: Running
+        - source_labels:
+            [__meta_kubernetes_pod_container_port_name, __meta_kubernetes_pod_container_port_number]
+          action: keep
+          regex: (metrics|http|http-metrics|system|system-metrics);.*|.*;(8000|8081|9090)
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          target_label: pod
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: node
+    - job_name: tei-ray-components
+      honor_labels: false
+      kubernetes_sd_configs:
+        - role: pod
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_ray_io_cluster]
+          action: keep
+          regex: .+
+        - source_labels: [__meta_kubernetes_pod_label_ray_io_node_type]
+          action: keep
+          regex: head|worker
+        - source_labels: [__meta_kubernetes_pod_phase]
+          action: keep
+          regex: Running
+        - source_labels:
+            [__meta_kubernetes_pod_container_port_name, __meta_kubernetes_pod_container_port_number]
+          action: keep
+          regex: metrics;.*|.*;8080
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          target_label: pod
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: node
+
+dcgmExporter:
+  enabled: true
+  kubernetes:
+    enablePodLabels: true
+    enablePodUID: true
+  service:
+    enable: true
+  serviceMonitor:
+    enabled: false
+
+postgresql:
+  enabled: true
+  image:
+    digest: sha256:db2312d9b243afa8c3b3f5496e478d17d0dff9791d06f3b93b9567abd86ae92f
+  auth:
+    username: tei
+    database: tei
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+database:
+  # Used only when postgresql.enabled=false.
+  existingSecret:
+    name: ""
+    key: dsn
+  cleanupIntervalMinutes: 15
+
+auth:
+  # Optional. When set, /api routes require Authorization: Bearer <token>.
+  bearerTokenSecret:
+    name: ""
+    key: token
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+terminationGracePeriodSeconds: 30
+
+podAnnotations: {}
+podLabels: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

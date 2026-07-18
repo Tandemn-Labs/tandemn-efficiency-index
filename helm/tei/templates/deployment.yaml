@@ -1,0 +1,153 @@
+{{- if ne (int .Values.replicaCount) 1 }}
+{{- fail "The TEI MVP collector requires replicaCount=1" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tei.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tei.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "tei.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- toYaml .Values.podAnnotations | nindent 8 }}
+      labels:
+        {{- include "tei.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "tei.serviceAccountName" . }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: tei
+          image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: TEI_PROMETHEUS_URL
+              value: {{ include "tei.prometheusURL" . | quote }}
+            - name: TEI_DISCOVERY_MODE
+              value: {{ .Values.discovery.mode | quote }}
+            - name: TEI_DISCOVERY_NAMESPACES
+              value: {{ join "," .Values.discovery.namespaces | quote }}
+            - name: TEI_DISCOVERY_INTERVAL_SECONDS
+              value: {{ .Values.discovery.intervalSeconds | quote }}
+            - name: TEI_STATE_INTERVAL_SECONDS
+              value: {{ .Values.observation.stateIntervalSeconds | quote }}
+            - name: TEI_OBSERVATION_DURATION_HOURS
+              value: {{ .Values.observation.durationHours | quote }}
+            {{- if .Values.postgresql.enabled }}
+            - name: TEI_DATABASE_DSN
+              value: {{ include "tei.postgresqlDSN" . | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tei.postgresqlName" . | quote }}
+                  key: password
+            {{- else }}
+            - name: TEI_DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "database.existingSecret.name is required when postgresql.enabled=false" .Values.database.existingSecret.name | quote }}
+                  key: {{ .Values.database.existingSecret.key | quote }}
+            {{- end }}
+            - name: TEI_CLEANUP_INTERVAL_MINUTES
+              value: {{ .Values.database.cleanupIntervalMinutes | quote }}
+            - name: TEI_PROMETHEUS_TIMEOUT_SECONDS
+              value: {{ .Values.prometheus.timeoutSeconds | quote }}
+            - name: TEI_PROMETHEUS_STEP_SECONDS
+              value: {{ .Values.prometheus.stepSeconds | quote }}
+            - name: TEI_PROMETHEUS_INSECURE_SKIP_VERIFY
+              value: {{ .Values.prometheus.tls.insecureSkipVerify | quote }}
+            {{- if .Values.auth.bearerTokenSecret.name }}
+            - name: TEI_API_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.bearerTokenSecret.name | quote }}
+                  key: {{ .Values.auth.bearerTokenSecret.key | quote }}
+            {{- end }}
+            {{- if and (not .Values.prometheus.enabled) .Values.prometheus.bearerTokenSecret.name }}
+            - name: TEI_PROMETHEUS_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.prometheus.bearerTokenSecret.name | quote }}
+                  key: {{ .Values.prometheus.bearerTokenSecret.key | quote }}
+            {{- end }}
+            {{- if and (not .Values.prometheus.enabled) .Values.prometheus.tls.caSecretName }}
+            - name: TEI_PROMETHEUS_CA_FILE
+              value: /etc/tei/prometheus/ca.crt
+            {{- end }}
+            - name: TEI_HOST
+              value: "0.0.0.0"
+            - name: TEI_PORT
+              value: {{ .Values.service.port | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if and (not .Values.prometheus.enabled) .Values.prometheus.tls.caSecretName }}
+            - name: prometheus-ca
+              mountPath: /etc/tei/prometheus
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if and (not .Values.prometheus.enabled) .Values.prometheus.tls.caSecretName }}
+        - name: prometheus-ca
+          secret:
+            secretName: {{ .Values.prometheus.tls.caSecretName | quote }}
+            items:
+              - key: {{ .Values.prometheus.tls.caSecretKey | quote }}
+                path: ca.crt
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

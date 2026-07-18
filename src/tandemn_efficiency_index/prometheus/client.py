@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import ssl
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -36,14 +37,27 @@ class PrometheusTransport(Protocol):
 class UrllibPrometheusTransport:
     """Prometheus transport backed by the Python standard library."""
 
+    def __init__(
+        self,
+        headers: Mapping[str, str] | None = None,
+        ssl_context: ssl.SSLContext | None = None,
+    ) -> None:
+        self._headers = dict(headers or {})
+        self._ssl_context = ssl_context
+
     def post(self, url: str, data: bytes, timeout_seconds: float) -> bytes:
+        headers = {"Content-Type": "application/x-www-form-urlencoded", **self._headers}
         http_request = request.Request(
             url,
             data=data,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            headers=headers,
             method="POST",
         )
-        with request.urlopen(http_request, timeout=timeout_seconds) as response:
+        with request.urlopen(
+            http_request,
+            timeout=timeout_seconds,
+            context=self._ssl_context,
+        ) as response:
             return cast(bytes, response.read())
 
 
@@ -59,10 +73,15 @@ class PrometheusClient:
         base_url: str,
         timeout_seconds: float = 10.0,
         transport: PrometheusTransport | None = None,
+        bearer_token: str | None = None,
+        ca_file: str | None = None,
+        insecure_skip_verify: bool = False,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
-        self._transport = transport or UrllibPrometheusTransport()
+        headers = {"Authorization": f"Bearer {bearer_token}"} if bearer_token else None
+        ssl_context = _ssl_context(ca_file, insecure_skip_verify)
+        self._transport = transport or UrllibPrometheusTransport(headers, ssl_context)
 
     def query_range(
         self,
@@ -87,6 +106,16 @@ class PrometheusClient:
         except (OSError, ValueError) as exc:
             raise PrometheusQueryError(f"Prometheus query failed: {exc}") from exc
         return _parse_response(response)
+
+
+def _ssl_context(ca_file: str | None, insecure_skip_verify: bool) -> ssl.SSLContext | None:
+    if ca_file is None and not insecure_skip_verify:
+        return None
+    context = ssl.create_default_context(cafile=ca_file)
+    if insecure_skip_verify:
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    return context
 
 
 def _parse_response(response: Any) -> list[PrometheusSeries]:

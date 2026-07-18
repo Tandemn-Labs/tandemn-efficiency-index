@@ -26,6 +26,7 @@ class MetricScope:
     local_rank: str | None = None
     gpu_instance_id: str | None = None
     runtime_instance: str | None = None
+    runtime_job_key: str | None = None
     runtime_role: str | None = None
     pod_namespace: str | None = None
     pod_name: str | None = None

@@ -12,6 +12,7 @@
 #         "backend": "<vllm|sglang>",
 #         "disaggregated": <bool>,
 #         "total_gpus": <number>,
+#         "declared_intent": <normalized-ray-serve-intent>,
 #         "pod_selectors": [
 #             {
 #                 "runtime_instance": "<active-or-pending-raycluster-name>",
@@ -50,6 +51,7 @@ import yaml
 from tandemn_efficiency_index.models.workload import (
     Workload,
     WorkloadComponent,
+    WorkloadIntent,
     WorkloadPodSelector,
     WorkloadRuntime,
 )
@@ -156,28 +158,29 @@ class RayWorkloadDetector:
             for llm_config, component_type, component_name in configured_components
         ]
         model_ids = {str(component.x["model_id"]) for component in components}
-        if len(model_ids) != 1:
-            raise ValueError(
-                f"RayService {namespace}/{name} must declare exactly one model; "
-                f"found {len(model_ids)}"
-            )
+        if not model_ids:
+            raise ValueError(f"RayService {namespace}/{name} does not declare a model")
         backends = {str(component.x["engine_name"]) for component in components}
-        if len(backends) != 1:
-            raise ValueError(f"RayService {namespace}/{name} mixes multiple LLM backends")
+        if not backends:
+            raise ValueError(f"RayService {namespace}/{name} does not declare an LLM backend")
         component_types = {component.component_type for component in components}
+        api_version = str(resource.get("apiVersion") or f"{RAY_API_GROUP}/unknown")
 
         return Workload(
             runtime=WorkloadRuntime.RAY,
             namespace=namespace,
             name=name,
             uid=_text(metadata.get("uid")),
-            api_version=str(resource.get("apiVersion") or f"{RAY_API_GROUP}/unknown"),
-            model_id=model_ids.pop(),
-            backend=backends.pop(),
+            api_version=api_version,
+            model_id=", ".join(sorted(model_ids)),
+            backend=", ".join(sorted(backends)),
             disaggregated={"prefill", "decode"}.issubset(component_types),
             total_gpus=_clean_number(sum(component.total_gpus for component in components)),
             components=components,
             pod_selectors=_pod_selectors(_mapping(resource.get("status"))),
+            declared_intent=_declared_intent(metadata, api_version, components),
+            source_generation=_optional_integer(metadata.get("generation")),
+            source_resource_version=_text(metadata.get("resourceVersion")),
         )
 
     def _get(self, target: RayWorkloadTarget) -> dict[str, Any]:
@@ -227,17 +230,18 @@ def _pod_selectors(status: Mapping[str, Any]) -> list[WorkloadPodSelector]:
         if not cluster_name or cluster_name in seen_clusters:
             continue
         seen_clusters.add(cluster_name)
-        selectors.append(
-            WorkloadPodSelector(
-                runtime_instance=cluster_name,
-                runtime_state=runtime_state,
-                match_labels={
-                    "ray.io/cluster": cluster_name,
-                    "ray.io/node-type": "worker",
-                },
-                role_label="ray.io/group",
+        for node_type in ("head", "worker"):
+            selectors.append(
+                WorkloadPodSelector(
+                    runtime_instance=cluster_name,
+                    runtime_state=runtime_state,
+                    match_labels={
+                        "ray.io/cluster": cluster_name,
+                        "ray.io/node-type": node_type,
+                    },
+                    role_label="ray.io/group",
+                )
             )
-        )
     return selectors
 
 
@@ -266,6 +270,7 @@ def _configured_components(
         if raw_configs is None and "llm_config" in args:
             raw_configs = [args["llm_config"]]
         if not isinstance(raw_configs, list):
+            found.extend(_generic_components(application))
             continue
         for index, config in enumerate(raw_configs):
             if not isinstance(config, Mapping):
@@ -277,9 +282,74 @@ def _configured_components(
 
     if not found:
         raise ValueError(
-            f"RayService {namespace}/{name} must declare an inline Ray Serve LLM config"
+            f"RayService {namespace}/{name} must expose model and backend configuration"
         )
     return found
+
+
+def _generic_components(
+    application: Mapping[str, Any],
+) -> list[tuple[Mapping[str, Any], str, str]]:
+    """Normalize explicit model-serving settings from a custom Ray Serve wrapper."""
+    application_args = _mapping(application.get("args"))
+    deployments = application.get("deployments")
+    candidates = deployments if isinstance(deployments, list) and deployments else [{}]
+    application_name = _text(application.get("name")) or "ray-serve"
+    import_path = _text(application.get("import_path")) or ""
+    found: list[tuple[Mapping[str, Any], str, str]] = []
+
+    for raw_deployment in candidates:
+        deployment = _mapping(raw_deployment)
+        user_config = _mapping(deployment.get("user_config"))
+        configured = {**application_args, **user_config}
+        model_id = _first_text(
+            configured,
+            "model_id",
+            "model",
+            "model_name",
+            "model_path",
+        )
+        backend = _configured_backend(configured, import_path, deployment)
+        if model_id is None or backend is None:
+            continue
+
+        engine_kwargs = _mapping(configured.get("engine_kwargs"))
+        if not engine_kwargs:
+            engine_kwargs = _mapping(configured.get(f"{backend}_engine_kwargs"))
+        component_name = _text(deployment.get("name")) or application_name
+        llm_config: dict[str, Any] = {
+            "model_loading_config": {"model_id": model_id},
+            "llm_engine": backend,
+            "engine_kwargs": dict(engine_kwargs),
+            "deployment_config": dict(deployment),
+        }
+        found.append((llm_config, "llm", component_name))
+    return found
+
+
+def _configured_backend(
+    configured: Mapping[str, Any],
+    import_path: str,
+    deployment: Mapping[str, Any],
+) -> str | None:
+    explicit = _first_text(configured, "backend", "engine", "engine_name", "llm_engine")
+    if explicit:
+        normalized = explicit.lower()
+        if normalized in {"vllm", "sglang"}:
+            return normalized
+    marker_text = " ".join(
+        (
+            import_path,
+            _text(deployment.get("name")) or "",
+            _text(configured.get("server_cls")) or "",
+        )
+    ).lower()
+    matches = {backend for backend in ("vllm", "sglang") if backend in marker_text}
+    return matches.pop() if len(matches) == 1 else None
+
+
+def _first_text(values: Mapping[str, Any], *keys: str) -> str | None:
+    return next((_text(values.get(key)) for key in keys if _text(values.get(key))), None)
 
 
 def _parse_component(
@@ -295,7 +365,7 @@ def _parse_component(
     deployment = _mapping(llm_config.get("deployment_config"))
     autoscaling = _mapping(deployment.get("autoscaling_config"))
     replicas = _replicas(deployment, autoscaling)
-    gpus_per_replica = _gpus_per_replica(engine_kwargs, llm_config)
+    gpus_per_replica = _gpus_per_replica(engine_kwargs, llm_config, deployment)
 
     x: dict[str, Any] = {"model_id": model_id, "engine_name": engine}
     model_source = model.get("model_source")
@@ -335,11 +405,71 @@ def _copy_deployment_x(
         (deployment, "request_router_config", "router_policy"),
         (autoscaling, "min_replicas", "min_replicas"),
         (autoscaling, "max_replicas", "max_replicas"),
+        (autoscaling, "initial_replicas", "initial_replicas"),
         (autoscaling, "target_ongoing_requests", "target_ongoing_requests"),
+        (autoscaling, "upscale_delay_s", "upscale_delay_s"),
+        (autoscaling, "downscale_delay_s", "downscale_delay_s"),
+        (autoscaling, "upscaling_factor", "upscaling_factor"),
+        (autoscaling, "downscaling_factor", "downscaling_factor"),
+        (autoscaling, "metrics_interval_s", "metrics_interval_s"),
+        (autoscaling, "look_back_period_s", "look_back_period_s"),
     )
     for source, source_name, field_name in fields:
         if source_name in source:
             x[field_name] = source[source_name]
+
+
+def _declared_intent(
+    metadata: Mapping[str, Any],
+    api_version: str,
+    components: Sequence[WorkloadComponent],
+) -> WorkloadIntent:
+    component_intents: list[dict[str, Any]] = []
+    autoscaling_fields = (
+        "min_replicas",
+        "max_replicas",
+        "initial_replicas",
+        "target_ongoing_requests",
+        "upscale_delay_s",
+        "downscale_delay_s",
+        "upscaling_factor",
+        "downscaling_factor",
+        "metrics_interval_s",
+        "look_back_period_s",
+    )
+    for component in components:
+        intent: dict[str, Any] = {
+            "name": component.name,
+            "component_type": component.component_type,
+            "replicas": component.replicas,
+        }
+        for field_name in ("max_ongoing_requests", "max_queued_requests"):
+            if field_name in component.x:
+                intent[field_name] = component.x[field_name]
+        autoscaling = {
+            field_name: component.x[field_name]
+            for field_name in autoscaling_fields
+            if field_name in component.x
+        }
+        if autoscaling:
+            intent["autoscaling"] = autoscaling
+        component_intents.append(intent)
+
+    return WorkloadIntent(
+        source_kind="RayService",
+        source_namespace=_required_text(metadata, "namespace"),
+        source_name=_required_text(metadata, "name"),
+        source_uid=_text(metadata.get("uid")),
+        api_version=api_version,
+        model_id=_single_component_value(components, "model_id"),
+        backend=_single_component_value(components, "engine_name"),
+        components=component_intents,
+    )
+
+
+def _single_component_value(components: Sequence[WorkloadComponent], field_name: str) -> str | None:
+    values = {str(component.x[field_name]) for component in components if field_name in component.x}
+    return values.pop() if len(values) == 1 else None
 
 
 def _replicas(deployment: Mapping[str, Any], autoscaling: Mapping[str, Any]) -> int:
@@ -354,12 +484,18 @@ def _replicas(deployment: Mapping[str, Any], autoscaling: Mapping[str, Any]) -> 
 
 
 def _gpus_per_replica(
-    engine_kwargs: Mapping[str, Any], llm_config: Mapping[str, Any]
+    engine_kwargs: Mapping[str, Any],
+    llm_config: Mapping[str, Any],
+    deployment: Mapping[str, Any],
 ) -> int | float:
     placement = _mapping(llm_config.get("placement_group_config"))
     bundles = placement.get("bundles")
     if isinstance(bundles, list) and bundles:
         return _clean_number(sum(_number(_mapping(bundle).get("GPU"), 0.0) for bundle in bundles))
+
+    ray_actor_options = _mapping(deployment.get("ray_actor_options"))
+    if "num_gpus" in ray_actor_options:
+        return _clean_number(_number(ray_actor_options.get("num_gpus"), 0.0))
 
     tp = _number(engine_kwargs.get("tensor_parallel_size", engine_kwargs.get("tp_size")), 1.0)
     pp = _number(engine_kwargs.get("pipeline_parallel_size", engine_kwargs.get("pp_size")), 1.0)
@@ -431,6 +567,15 @@ def _number(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _optional_integer(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _clean_number(value: float) -> int | float:

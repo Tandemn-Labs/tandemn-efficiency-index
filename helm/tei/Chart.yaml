@@ -1,0 +1,20 @@
+apiVersion: v2
+name: tei
+description: Tandemn Efficiency Index Kubernetes workload observability
+type: application
+version: 0.2.0
+appVersion: "0.2.0"
+dependencies:
+  - name: prometheus
+    version: 29.17.0
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: prometheus.enabled
+  - name: dcgm-exporter
+    alias: dcgmExporter
+    version: 4.8.3
+    repository: https://nvidia.github.io/dcgm-exporter/helm-charts
+    condition: dcgmExporter.enabled
+  - name: postgresql
+    version: 18.8.0
+    repository: oci://registry-1.docker.io/bitnamicharts
+    condition: postgresql.enabled

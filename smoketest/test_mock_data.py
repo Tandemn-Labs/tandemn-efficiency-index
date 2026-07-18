@@ -7,13 +7,13 @@ from smoketest.mock_data import (
     JOB_SPECS,
     RUN_DURATION,
     SAMPLE_INTERVAL_SECONDS,
+    SMOKE_DCGM_METRICS,
     build_mock_cluster_record,
     build_mock_snapshot,
 )
 from smoketest.run_dashboard import MockObserver
 from tandemn_efficiency_index.models.workload import WorkloadRuntime
 from tandemn_efficiency_index.observability import cluster_record_to_dict
-from tandemn_efficiency_index.prometheus.dcgm import DCGM_METRICS
 
 
 def test_record_has_expected_customer_scenario() -> None:
@@ -33,7 +33,7 @@ def test_record_has_expected_customer_scenario() -> None:
 
 def test_mock_exercises_complete_partial_and_missing_gpu_coverage() -> None:
     record = build_mock_cluster_record()
-    expected_metrics = set(DCGM_METRICS)
+    expected_metrics = set(SMOKE_DCGM_METRICS)
     expected_sample_count = 140
 
     for job in record.jobs.values():
@@ -81,7 +81,7 @@ def test_snapshot_matches_dashboard_contract_and_is_json_serializable() -> None:
         "workload_count": 3,
         "worker_count": 6,
         "gpu_count": 9,
-        "metric_count": len(DCGM_METRICS),
+        "metric_count": len(SMOKE_DCGM_METRICS),
         "series_count": 148,
         "unattributed_series_count": 1,
     }
