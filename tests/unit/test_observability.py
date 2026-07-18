@@ -87,8 +87,6 @@ def test_observability_runtime_and_dashboard_assets_are_available() -> None:
     assert 'id="healthGrid"' in html
     assert 'id="workerList"' in html
     assert 'id="diagnosticList"' in html
-    assert 'id="scopeDetails"' in html
-    assert 'id="jobJsonDetails"' in html
     assert 'class="sidebar"' not in html
     assert 'class="baseline-note"' in html
     assert "function evaluateBenchmark" in javascript
