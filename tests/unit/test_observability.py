@@ -4,6 +4,7 @@ from importlib import resources
 
 import pytest
 
+from tandemn_efficiency_index.control import ControlPlaneError, TeiControlClient
 from tandemn_efficiency_index.models.cluster_snapshot import (
     ClusterRecord,
     JobRecord,
@@ -13,6 +14,7 @@ from tandemn_efficiency_index.models.telemetry import MetricSample, MetricScope,
 from tandemn_efficiency_index.models.workload import Workload, WorkloadRuntime
 from tandemn_efficiency_index.observability import (
     ObservabilityRuntime,
+    ObservabilityServer,
     _bearer_token_matches,
     _downsample,
     _snapshot_parameters,
@@ -107,6 +109,57 @@ def test_runtime_reports_health_and_readiness_after_collection() -> None:
     runtime.stop()
 
 
+def test_runtime_can_stop_and_resume_collection_without_closing_api() -> None:
+    observer = FakeObserver(_cluster_record(datetime.now(UTC)))
+    runtime = ObservabilityRuntime(observer)
+    runtime.start()
+    assert observer.collected.wait(timeout=1)
+
+    runtime.pause()
+    stopped = runtime.status()
+
+    assert stopped["lifecycle"] == "stopped"
+    assert stopped["running"] is False
+    assert stopped["healthy"] is True
+    assert stopped["ready"] is True
+
+    observer.collected.clear()
+    runtime.start()
+    assert observer.collected.wait(timeout=1)
+    assert runtime.status()["lifecycle"] == "running"
+    runtime.stop()
+
+
+def test_observation_control_endpoints_require_auth_and_keep_api_available() -> None:
+    observer = FakeObserver(_cluster_record(datetime.now(UTC)))
+    server = ObservabilityServer(
+        observer,
+        host="127.0.0.1",
+        port=0,
+        api_bearer_token="secret",
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    assert observer.collected.wait(timeout=1)
+    host, port = server.address
+    client = TeiControlClient(f"http://{host}:{port}", token="secret")
+
+    stopped = client.stop_observation()
+    assert stopped["lifecycle"] == "stopped"
+    assert client.health()["healthy"] is True
+    assert client.status()["lifecycle"] == "stopped"
+
+    with pytest.raises(ControlPlaneError) as unauthorized:
+        TeiControlClient(f"http://{host}:{port}").start_observation()
+    assert unauthorized.value.status_code == 401
+
+    restarted = client.start_observation()
+    assert restarted["lifecycle"] == "running"
+    server.shutdown()
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+
+
 def test_runtime_liveness_does_not_call_dependency_status() -> None:
     runtime = ObservabilityRuntime(FailingStatusObserver(_cluster_record(datetime.now(UTC))))
 
@@ -114,6 +167,8 @@ def test_runtime_liveness_does_not_call_dependency_status() -> None:
     status = runtime.status()
 
     assert process["running"] is False
+    assert process["healthy"] is True
+    assert process["lifecycle"] == "stopped"
     assert status["ready"] is False
     assert status["collector"]["error"] == "database unavailable"
 

@@ -23,3 +23,20 @@ repos:
         language: system
         files: ^src/tandemn_efficiency_index/ui/app\.js$
         pass_filenames: false
+      - id: gofmt
+        name: Go format
+        entry: gofmt -w
+        language: system
+        types: [go]
+      - id: go-test
+        name: Go test
+        entry: go test ./...
+        language: system
+        files: ^(cmd|internal)/.*\.go$|^go\.(mod|sum)$
+        pass_filenames: false
+      - id: go-vet
+        name: Go vet
+        entry: go vet ./...
+        language: system
+        files: ^(cmd|internal)/.*\.go$|^go\.(mod|sum)$
+        pass_filenames: false

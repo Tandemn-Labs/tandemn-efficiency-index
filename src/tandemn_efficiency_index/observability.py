@@ -519,38 +519,75 @@ class ObservabilityRuntime:
         self._observer = observer
         self._record = observer.record
         self._lock = threading.Lock()
+        self._lifecycle_lock = threading.RLock()
         self._stopped = threading.Event()
         self._thread: threading.Thread | None = None
         self._closed = False
+        self._desired_state = "stopped"
+        self._last_transition_at = datetime.now().astimezone()
+        self._last_transition_error: str | None = None
         self._last_tick_started_at: datetime | None = None
         self._last_tick_completed_at: datetime | None = None
         self._last_tick_error: str | None = None
 
     def start(self) -> None:
         """Start periodic collection if it is not already running."""
-        if self._thread is not None and self._thread.is_alive():
-            return
-        self._stopped.clear()
-        self._thread = threading.Thread(
-            target=self._collect_loop,
-            name="tei-observability-collector",
-            daemon=True,
-        )
-        self._thread.start()
+        with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError("TEI observability runtime is closed")
+            if self._thread is not None and self._thread.is_alive():
+                self._desired_state = "running"
+                return
+            self._desired_state = "running"
+            self._stopped.clear()
+            self._thread = threading.Thread(
+                target=self._collect_loop,
+                name="tei-observability-collector",
+                daemon=True,
+            )
+            try:
+                self._thread.start()
+            except Exception as exc:
+                self._desired_state = "stopped"
+                self._last_transition_error = str(exc)
+                self._last_transition_at = datetime.now().astimezone()
+                raise
+            self._last_transition_error = None
+            self._last_transition_at = datetime.now().astimezone()
+
+    def pause(self) -> None:
+        """Stop periodic collection while keeping the API and observer available."""
+        with self._lifecycle_lock:
+            self._desired_state = "stopped"
+            self._stopped.set()
+            thread = self._thread
+            if thread is not None and thread is not threading.current_thread():
+                thread.join(timeout=30)
+                if thread.is_alive():
+                    message = "TEI collection did not stop before the shutdown deadline"
+                    self._last_transition_error = message
+                    self._last_transition_at = datetime.now().astimezone()
+                    LOGGER.warning(message)
+                    raise RuntimeError(message)
+            self._thread = None
+            self._last_transition_error = None
+            self._last_transition_at = datetime.now().astimezone()
+
+    def restart(self) -> None:
+        """Restart periodic collection without closing durable resources."""
+        self.pause()
+        self.start()
 
     def stop(self) -> None:
-        """Stop periodic collection and close the observer after in-flight work."""
-        self._stopped.set()
-        if self._thread is not None:
-            self._thread.join(timeout=30)
-            if self._thread.is_alive():
-                LOGGER.warning("TEI collection did not stop before the shutdown deadline")
-                return
-        if not self._closed:
-            close = getattr(self._observer, "close", None)
-            if callable(close):
-                close()
-            self._closed = True
+        """Permanently stop collection and close the observer."""
+        with self._lifecycle_lock:
+            self.pause()
+            if not self._closed:
+                close = getattr(self._observer, "close", None)
+                if callable(close):
+                    close()
+                self._closed = True
+                self._last_transition_at = datetime.now().astimezone()
 
     def collect_once(self) -> ClusterRecord | ObservationState:
         """Collect and retain one observation tick."""
@@ -604,15 +641,29 @@ class ObservabilityRuntime:
         ready = bool(observer_status.get("ready", self._last_tick_completed_at is not None))
         return {
             **process,
-            "ready": bool(process["running"]) and ready,
+            "ready": bool(process["healthy"]) and ready,
             "collector": observer_status,
         }
 
     def process_status(self) -> dict[str, Any]:
         """Return liveness state without calling external dependencies."""
         running = self._thread is not None and self._thread.is_alive()
+        if self._closed:
+            lifecycle = "closed"
+        elif running:
+            lifecycle = "running"
+        elif self._desired_state == "running":
+            lifecycle = "failed"
+        else:
+            lifecycle = "stopped"
+        healthy = not self._closed and lifecycle != "failed"
         return {
             "running": running,
+            "healthy": healthy,
+            "lifecycle": lifecycle,
+            "desired_state": self._desired_state,
+            "last_transition_at": self._last_transition_at.isoformat(),
+            "last_transition_error": self._last_transition_error,
             "last_tick_started_at": (
                 self._last_tick_started_at.isoformat()
                 if self._last_tick_started_at is not None
@@ -688,7 +739,7 @@ def _handler_for(
                 status = runtime.process_status()
                 self._send_json(
                     status,
-                    status=HTTPStatus.OK if status["running"] else HTTPStatus.SERVICE_UNAVAILABLE,
+                    status=HTTPStatus.OK if status["healthy"] else HTTPStatus.SERVICE_UNAVAILABLE,
                 )
                 return
             if parsed.path.startswith("/api/") and not self._api_authorized():
@@ -716,6 +767,38 @@ def _handler_for(
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             self._serve_static(*static_file)
+
+        def do_POST(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path.startswith("/api/") and not self._api_authorized():
+                self._send_json(
+                    {"error": "A valid bearer token is required"},
+                    status=HTTPStatus.UNAUTHORIZED,
+                    authenticate=True,
+                )
+                return
+            actions = {
+                "/api/v1/observation/start": runtime.start,
+                "/api/v1/observation/stop": runtime.pause,
+                "/api/v1/observation/restart": runtime.restart,
+            }
+            action = actions.get(parsed.path)
+            if action is None:
+                self._send_json(
+                    {"error": "Control endpoint not found"},
+                    status=HTTPStatus.NOT_FOUND,
+                )
+                return
+            try:
+                action()
+            except Exception as exc:
+                LOGGER.exception("Observation control action failed")
+                self._send_json(
+                    {"error": f"Observation control action failed: {exc}"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            self._send_json(runtime.status())
 
         def _serve_snapshot(self, query: Mapping[str, list[str]]) -> None:
             try:

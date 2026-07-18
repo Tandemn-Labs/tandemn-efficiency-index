@@ -11,4 +11,4 @@ USER 65532:65532
 
 EXPOSE 8000
 
-CMD ["/app/.venv/bin/tei"]
+CMD ["/app/.venv/bin/tei-server"]

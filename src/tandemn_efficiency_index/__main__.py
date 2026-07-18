@@ -1,5 +1,5 @@
-"""Run TEI as a Python module."""
+"""Run the TEI command-line control plane as a Python module."""
 
-from tandemn_efficiency_index.app import main
+from tandemn_efficiency_index.cli import main
 
-main()
+raise SystemExit(main())

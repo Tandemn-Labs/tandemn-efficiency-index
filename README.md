@@ -307,7 +307,175 @@ definitions are cluster-scoped, so the ServiceAccount still receives cluster-wid
 to `customresourcedefinitions`. Set `serviceAccount.create=false` and provide
 `serviceAccount.name` when a platform administrator supplies RBAC separately.
 
-## Snapshot API
+## CLI control plane
+
+The `tei` command is a remote control plane for the running TEI service. It calls the same HTTP API
+used by the dashboard; it does not independently query Kubernetes, PostgreSQL, or Prometheus. The
+collector remains the single owner of observation state and telemetry attribution.
+
+### Go terminal UI
+
+The primary interactive client is implemented in Go with Cobra, Bubble Tea, Bubbles, and Lip Gloss.
+Running it without a subcommand opens a full-screen control room with a conversation-style
+transcript, command history, asynchronous activity state, lifecycle status, and keyboard shortcuts:
+
+```shell
+go run ./cmd/tei
+```
+
+The interactive control room accepts:
+
+```text
+/status
+/health
+/ready
+/workloads
+/snapshot [15m|1h|6h|24h|all]
+/start
+/stop
+/restart
+/dashboard
+/clear
+/help
+/quit
+```
+
+Typing `/` opens the complete command palette, which filters as more characters are entered. Use the
+arrow keys to select a command and `Tab` or `Enter` to complete it. When the palette is closed, the
+arrow keys navigate command history. `Ctrl+L` clears the transcript, `Enter` runs a completed
+command, and `Esc` or `Ctrl+C` exits. `tei shell` opens the same interface explicitly.
+
+The Cobra subcommands provide scriptable access to the same operations:
+
+```shell
+go run ./cmd/tei status
+go run ./cmd/tei workloads
+go run ./cmd/tei observe stop
+go run ./cmd/tei observe start
+go run ./cmd/tei snapshot --window 1h --output snapshot.json
+go run ./cmd/tei dashboard
+```
+
+Install a local `tei` binary into the configured Go binary directory with:
+
+```shell
+go install ./cmd/tei
+tei
+```
+
+The Go module requires Go 1.24 or newer. Its dependencies and checksums are pinned in `go.mod` and
+`go.sum`. Run its validation with:
+
+```shell
+go test ./...
+go vet ./...
+go build ./cmd/tei
+```
+
+For a Kubernetes installation, every Go command and the full-screen shell support the same temporary
+port-forward options:
+
+```shell
+go run ./cmd/tei --kube
+go run ./cmd/tei status --kube
+go run ./cmd/tei dashboard --kube
+```
+
+`--api-url`, `--token`, `--timeout`, `--namespace`, `--release`, `--service`, and `--local-port`
+are persistent Cobra flags and may be placed before or after a subcommand.
+
+### Python client
+
+The dependency-light Python client remains available as a fallback and for Python development.
+
+After `uv sync`, run the CLI through `uv`:
+
+```shell
+uv run tei --help
+```
+
+For a directly reachable service, set `TEI_API_URL` or pass `--api-url`:
+
+```shell
+export TEI_API_URL=https://tei.example.com
+export TEI_API_TOKEN=replace-with-the-configured-bearer-token
+
+uv run tei status
+uv run tei workloads
+uv run tei snapshot --window 1h --output snapshot.json
+uv run tei dashboard
+```
+
+For the default in-cluster Service, `--kube` creates an owned temporary `kubectl port-forward`.
+The default Helm release and namespace are `tei` and `tei-system`, producing Service `tei-tei`:
+
+```shell
+uv run tei status --kube
+uv run tei dashboard --kube
+uv run tei observe stop --kube
+uv run tei observe start --kube
+```
+
+Use `--release`, `--namespace`, or `--service` when the Helm names differ. Read and control commands
+also accept `--token`, `--timeout`, and `--local-port`. `dashboard --kube` keeps the port-forward in
+the foreground until `Ctrl+C`; `dashboard --no-open` prints the URL without launching a browser.
+
+### Command reference
+
+| Command | Purpose |
+| --- | --- |
+| `tei status [--json]` | Show lifecycle, readiness, last collection, Prometheus, and PostgreSQL state. |
+| `tei health [--json]` | Check whether the API and lifecycle controller are healthy. |
+| `tei ready [--json]` | Check discovery, collection, Prometheus, and PostgreSQL readiness. |
+| `tei workloads [--json]` | List observed workloads, workers, and coverage. |
+| `tei snapshot` | Fetch report JSON for `15m`, `1h`, `6h`, `24h`, or `all`. |
+| `tei observe start` | Start or resume periodic Kubernetes reconciliation. |
+| `tei observe stop` | Stop periodic reconciliation while keeping the API and dashboard available. |
+| `tei observe restart` | Stop and restart periodic reconciliation without closing storage. |
+| `tei dashboard` | Print and open the dashboard URL. |
+| `tei shell` | Open the interactive slash-command shell. |
+| `tei logs [--follow]` | Read the TEI Kubernetes Deployment logs. |
+| `tei server` | Run the in-cluster service process; `tei-server` is its dedicated executable. |
+
+Convenience root aliases map to the same command handlers:
+
+```shell
+tei --status
+tei --dashboard
+tei --start
+tei --stop
+tei --restart
+```
+
+Machine-readable commands support JSON output. CLI exit codes are `0` for success, `1` for a local
+connection or command failure, `3` for an HTTP/service failure, `4` for not-ready status, `5` for
+authentication failure, and `130` for user interruption.
+
+### Interactive slash commands
+
+`tei shell` keeps one direct or Kubernetes port-forwarded connection open and accepts:
+
+```text
+/status
+/health
+/ready
+/workloads
+/snapshot [15m|1h|6h|24h|all]
+/start
+/stop
+/restart
+/dashboard
+/help
+/quit
+```
+
+Observation control is process-local in the current MVP. A TEI Pod restart restores the existing
+PostgreSQL observation and automatically resumes collection. `observe stop` stops TEI's periodic
+Kubernetes reconciliation; it does not stop the independently running Prometheus or dcgm-exporter,
+and a snapshot request can still read the retained Prometheus window using the last known Pod
+assignments.
+
+## Control-plane and snapshot API
 
 The dashboard server exposes:
 
@@ -316,6 +484,9 @@ GET /api/v1/snapshot
 GET /api/v1/status
 GET /healthz
 GET /readyz
+POST /api/v1/observation/start
+POST /api/v1/observation/stop
+POST /api/v1/observation/restart
 ```
 
 Query parameters:
@@ -327,7 +498,8 @@ Query parameters:
 Set `auth.bearerTokenSecret.name` and `.key` to protect `/api/*` with a bearer token. The dashboard
 prompts once and keeps the token in browser session storage. `/healthz` and `/readyz` remain
 unauthenticated for Kubernetes probes; TLS and multi-user policy should be supplied by an ingress or
-service mesh.
+service mesh. All observation mutation endpoints are under `/api/*` and therefore require the same
+configured bearer token. Lifecycle operations are idempotent.
 
 The response contains:
 
@@ -344,6 +516,8 @@ The response contains:
 ```text
 src/tandemn_efficiency_index/
 ├── app.py                         # In-cluster process configuration and startup
+├── cli.py                         # CLI commands, slash shell, and Kubernetes port-forward
+├── control.py                     # HTTP control-plane client
 ├── kubernetes_discovery.py        # CRD and workload instance discovery
 ├── dynamo/workload_detection.py   # DynamoGraphDeployment normalization
 ├── ray/workload_detection.py      # RayService normalization
@@ -359,6 +533,11 @@ tests/                               # Unit and contract tests
 helm/tei/                            # Helm deployment and RBAC
 smoketest/                           # Removable dashboard-development fixture
 OBSERVABILITY.md                     # Detailed dashboard and API behavior
+
+cmd/tei/                              # Go CLI executable
+internal/cli/                         # Cobra commands and connection options
+internal/control/                     # Go HTTP client and Kubernetes port-forward
+internal/tui/                         # Bubble Tea interactive control room
 ```
 
 ## Privacy and data egress

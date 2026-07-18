@@ -66,10 +66,25 @@ Query parameters:
 The default response is one hour with at most 180 points per series. PostgreSQL contains no
 Prometheus samples; downsampling only bounds the generated response payload.
 
-`GET /api/v1/status` reports collection, Prometheus, and storage state. `/healthz` checks only the
-process and collection thread; `/readyz` additionally requires successful Kubernetes discovery,
+`GET /api/v1/status` reports lifecycle, collection, Prometheus, and storage state. `/healthz` checks
+that the API lifecycle controller is healthy; an intentionally stopped collector remains healthy so
+the CLI can start it again. `/readyz` additionally requires successful Kubernetes discovery,
 Prometheus reachability, and writable PostgreSQL. Configure `auth.bearerTokenSecret` to require a
 bearer token for `/api/*`; probe routes remain unauthenticated.
+
+The service exposes idempotent, authenticated collection controls:
+
+```text
+POST /api/v1/observation/start
+POST /api/v1/observation/stop
+POST /api/v1/observation/restart
+```
+
+Stopping collection leaves the API, dashboard, observer state, and PostgreSQL connection available.
+It stops periodic Kubernetes reconciliation but does not stop the separately deployed Prometheus or
+dcgm-exporter. Snapshot requests can therefore still query retained Prometheus data with the last
+known workload and Pod assignments. The lifecycle state is process-local in the MVP; restarting the
+TEI Pod automatically starts collection and restores its active observation from PostgreSQL.
 
 ## Prometheus attribution contract
 

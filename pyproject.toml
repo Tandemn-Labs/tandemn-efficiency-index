@@ -14,7 +14,8 @@ dependencies = [
 ]
 
 [project.scripts]
-tei = "tandemn_efficiency_index.app:main"
+tei = "tandemn_efficiency_index.cli:main"
+tei-server = "tandemn_efficiency_index.app:main"
 
 [dependency-groups]
 dev = [
