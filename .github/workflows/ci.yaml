@@ -54,6 +54,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
+      - run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add nvidia https://nvidia.github.io/dcgm-exporter/helm-charts
+          helm repo update
       - run: helm dependency build helm/tei
       - run: helm lint helm/tei
       - run: helm template tei helm/tei --namespace tei-system
