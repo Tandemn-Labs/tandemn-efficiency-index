@@ -187,9 +187,9 @@ jobs:
             -o "build/$binary" \
             ./cmd/tei
           if [ "$GOOS" = "windows" ]; then
-            (cd build && zip "../dist/tei-${VERSION}-${GOOS}-${GOARCH}.zip" "$binary")
+            (cd build && zip "../dist/tei-${GOOS}-${GOARCH}.zip" "$binary")
           else
-            tar -czf "dist/tei-${VERSION}-${GOOS}-${GOARCH}.tar.gz" -C build "$binary"
+            tar -czf "dist/tei-${GOOS}-${GOARCH}.tar.gz" -C build "$binary"
           fi
       - uses: actions/upload-artifact@v4
         with:
@@ -205,11 +205,16 @@ jobs:
       - cli
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
           pattern: "!*.dockerbuild"
           merge-multiple: true
+      - name: Add installers
+        run: |
+          cp install.sh release-assets/install.sh
+          cp install.ps1 release-assets/install.ps1
       - name: Write checksums
         working-directory: release-assets
         run: sha256sum * > checksums.txt

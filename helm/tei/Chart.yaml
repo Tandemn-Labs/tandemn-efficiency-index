@@ -2,8 +2,8 @@ apiVersion: v2
 name: tei
 description: Tandemn Efficiency Index Kubernetes workload observability
 type: application
-version: 0.2.2
-appVersion: "0.2.2"
+version: 0.1.0
+appVersion: "0.1.0"
 home: https://github.com/Tandemn-Labs/tandemn-efficiency-index
 sources:
   - https://github.com/Tandemn-Labs/tandemn-efficiency-index

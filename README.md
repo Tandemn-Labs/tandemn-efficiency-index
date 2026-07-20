@@ -28,7 +28,6 @@ services. It requires a default StorageClass and provisions 28 GiB of persistent
 ```shell
 helm upgrade --install tei \
   oci://ghcr.io/tandemn-labs/charts/tei \
-  --version 0.2.2 \
   --namespace tandemn-system \
   --create-namespace
 ```
@@ -41,31 +40,22 @@ kubectl --namespace tandemn-system rollout status deployment/tei-tei --timeout=5
 
 ## 2. Install the local TUI
 
-Download the archive that matches the computer where you will run the TUI:
-
-| Computer | Release archive |
-| --- | --- |
-| macOS, Apple silicon | `tei-0.2.2-darwin-arm64.tar.gz` |
-| macOS, Intel | `tei-0.2.2-darwin-amd64.tar.gz` |
-| Linux, x86-64 | `tei-0.2.2-linux-amd64.tar.gz` |
-| Linux, ARM64 | `tei-0.2.2-linux-arm64.tar.gz` |
-| Windows, x86-64 | `tei-0.2.2-windows-amd64.zip` |
-
-For macOS or Linux, set `TEI_PLATFORM` to the matching value from the table and install the binary:
+On macOS or Linux, download and run the installer:
 
 ```shell
-TEI_VERSION=0.2.2
-TEI_PLATFORM=linux-amd64
-
-curl -LO "https://github.com/Tandemn-Labs/tandemn-efficiency-index/releases/download/v${TEI_VERSION}/tei-${TEI_VERSION}-${TEI_PLATFORM}.tar.gz"
-tar -xzf "tei-${TEI_VERSION}-${TEI_PLATFORM}.tar.gz"
-mkdir -p "$HOME/.local/bin"
-install -m 0755 tei "$HOME/.local/bin/tei"
+curl -fsSLO https://github.com/Tandemn-Labs/tandemn-efficiency-index/releases/latest/download/install.sh
+sh install.sh
 ```
 
-Ensure `$HOME/.local/bin` is on your `PATH`. On Windows, download the `.zip` from the
-[Releases page](https://github.com/Tandemn-Labs/tandemn-efficiency-index/releases), extract
-`tei.exe`, and place it in a directory on your `PATH`.
+On Windows, run:
+
+```powershell
+Invoke-WebRequest https://github.com/Tandemn-Labs/tandemn-efficiency-index/releases/latest/download/install.ps1 -OutFile install.ps1
+.\install.ps1
+```
+
+The installer detects the computer platform, verifies the downloaded TUI checksum, and installs it
+in `$HOME/.local/bin`. Ensure that directory is on your `PATH`.
 
 Run the TUI from a computer with `kubectl` access to the cluster:
 
@@ -103,7 +93,6 @@ Download the chart and copy its production profile:
 
 ```shell
 helm pull oci://ghcr.io/tandemn-labs/charts/tei \
-  --version 0.2.2 \
   --untar
 
 cp tei/values-production.yaml tei-production.yaml
@@ -118,7 +107,6 @@ Install the configured release:
 ```shell
 helm upgrade --install tei \
   oci://ghcr.io/tandemn-labs/charts/tei \
-  --version 0.2.2 \
   --namespace tandemn-system \
   --create-namespace \
   --values tei-production.yaml
@@ -128,10 +116,10 @@ The external Prometheus server must already scrape DCGM and the relevant Dynamo 
 all chart settings with:
 
 ```shell
-helm show values oci://ghcr.io/tandemn-labs/charts/tei --version 0.2.2
+helm show values oci://ghcr.io/tandemn-labs/charts/tei
 ```
 
-The chart and image are public packages. Customers do not need a GHCR login or image pull Secret.
+Published releases are public. Customers do not need a GHCR login or image pull Secret.
 
 ## Upgrade
 
@@ -140,7 +128,6 @@ Review the release notes and reuse the same values file with the new version:
 ```shell
 helm upgrade tei \
   oci://ghcr.io/tandemn-labs/charts/tei \
-  --version NEW_VERSION \
   --namespace tandemn-system \
   --values tei-production.yaml
 ```

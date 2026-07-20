@@ -1027,7 +1027,7 @@ wheels = [
 
 [[package]]
 name = "tandemn-efficiency-index"
-version = "0.2.2"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "kubernetes" },
