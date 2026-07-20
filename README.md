@@ -67,20 +67,20 @@ The TUI opens a temporary Kubernetes port-forward to the TEI service in `tandemn
 
 ## Open the dashboard
 
-Keep this port-forward running:
+Inside the TUI, enter `/dashboard`. To open the dashboard directly without entering the TUI, run:
 
 ```shell
-kubectl --namespace tandemn-system port-forward service/tei-tei 8000:8000
+tei dashboard --kube
 ```
 
-Open <http://127.0.0.1:8000>. The first useful charts appear after Prometheus has collected
-telemetry.
+The command opens the browser and keeps its temporary port-forward active until you press Ctrl+C.
+The first useful charts appear after Prometheus has collected telemetry.
 
 Check readiness or logs when the collector does not start:
 
 ```shell
-curl http://127.0.0.1:8000/readyz
-kubectl --namespace tandemn-system logs deployment/tei-tei
+tei ready --kube
+tei logs
 ```
 
 ## Production configuration

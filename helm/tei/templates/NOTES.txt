@@ -6,11 +6,7 @@ Wait for the collector:
 
 Check readiness:
 
-  # Terminal 1
-  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "tei.fullname" . }} 8000:{{ .Values.service.port }}
-
-  # Terminal 2
-  curl http://127.0.0.1:8000/readyz
+  tei ready --kube --namespace {{ .Release.Namespace }}
 
 {{- if .Values.ingress.enabled }}
 Dashboard:
@@ -20,5 +16,5 @@ Dashboard:
 {{- else }}
 Dashboard:
 
-  Keep the port-forward above running and open http://127.0.0.1:8000
+  tei dashboard --kube --namespace {{ .Release.Namespace }}
 {{- end }}

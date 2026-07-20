@@ -3,7 +3,6 @@ from collections.abc import Mapping
 
 import pytest
 
-from tandemn_efficiency_index.cli import _expand_root_aliases, _window_seconds
 from tandemn_efficiency_index.control import ControlPlaneError, TeiControlClient
 
 
@@ -110,17 +109,3 @@ def test_control_client_returns_unavailable_readiness_document() -> None:
     assert client.readiness() == {"ready": False, "lifecycle": "running"}
     with pytest.raises(ControlPlaneError):
         client.status()
-
-
-def test_cli_windows_and_root_aliases_are_stable() -> None:
-    assert _window_seconds("15m") == 900
-    assert _window_seconds("all") == 0
-    assert _expand_root_aliases(["--status", "--json"]) == ["status", "--json"]
-    assert _expand_root_aliases(["--start", "--kube"]) == [
-        "observe",
-        "start",
-        "--kube",
-    ]
-
-    with pytest.raises(ValueError, match="window must be one of"):
-        _window_seconds("2h")

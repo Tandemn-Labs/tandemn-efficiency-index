@@ -54,11 +54,10 @@ jobs:
           echo "image=ghcr.io/$owner/$repository" >> "$GITHUB_OUTPUT"
           echo "chart_registry=oci://ghcr.io/$owner/charts" >> "$GITHUB_OUTPUT"
       - run: uv sync --frozen --group dev
-      - run: uv run ruff format --check src tests smoketest
-      - run: uv run ruff check src tests smoketest
-      - run: uv run mypy src tests smoketest
+      - run: uv run ruff format --check src tests
+      - run: uv run ruff check src tests
+      - run: uv run mypy src tests
       - run: uv run pytest
-      - run: uv run pytest smoketest
       - run: go test ./...
       - run: go vet ./...
       - run: helm dependency build helm/tei

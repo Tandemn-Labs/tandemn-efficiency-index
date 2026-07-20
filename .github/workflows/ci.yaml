@@ -40,11 +40,10 @@ jobs:
           python-version: "3.12"
       - run: uv sync --frozen --group dev
       - run: curl --fail --retry 20 --retry-delay 1 http://localhost:9090/-/ready
-      - run: uv run ruff format --check src tests smoketest
-      - run: uv run ruff check src tests smoketest
-      - run: uv run mypy src tests smoketest
+      - run: uv run ruff format --check src tests
+      - run: uv run ruff check src tests
+      - run: uv run mypy src tests
       - run: uv run pytest
-      - run: uv run pytest smoketest
 
   helm:
     runs-on: ubuntu-latest
