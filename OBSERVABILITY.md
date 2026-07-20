@@ -25,7 +25,7 @@ helm install tei ./helm/tei \
   --namespace tandemn-system \
   --create-namespace \
   --set image.repository=example.com/tandemn-efficiency-index \
-  --set image.tag=0.2.1
+  --set image.tag=0.2.2
 ```
 
 The bundled Prometheus server retains 24 hours on a 20 GiB persistent volume and uses a ten-second

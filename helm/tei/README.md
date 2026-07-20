@@ -8,7 +8,7 @@ Install a self-contained evaluation release:
 ```shell
 helm upgrade --install tei \
   oci://ghcr.io/tandemn-labs/charts/tei \
-  --version 0.2.1 \
+  --version 0.2.2 \
   --namespace tandemn-system \
   --create-namespace
 ```
@@ -17,7 +17,7 @@ For production, pull and unpack the chart, copy `values-production.yaml`, and re
 service URLs, Secret names, Ingress class, hostname, and TLS Secret:
 
 ```shell
-helm pull oci://ghcr.io/tandemn-labs/charts/tei --version 0.2.1 --untar
+helm pull oci://ghcr.io/tandemn-labs/charts/tei --version 0.2.2 --untar
 cp tei/values-production.yaml tei-production.yaml
 ```
 
@@ -26,7 +26,7 @@ Install with the edited values file:
 ```shell
 helm upgrade --install tei \
   oci://ghcr.io/tandemn-labs/charts/tei \
-  --version 0.2.1 \
+  --version 0.2.2 \
   --namespace tandemn-system \
   --create-namespace \
   --values tei-production.yaml

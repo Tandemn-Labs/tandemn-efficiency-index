@@ -208,6 +208,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
+          pattern: "!*.dockerbuild"
           merge-multiple: true
       - name: Write checksums
         working-directory: release-assets
