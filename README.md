@@ -17,7 +17,10 @@ cluster data to Tandemn.
 
 TEI does not install GPU drivers, the NVIDIA device plugin, Dynamo, KubeRay, or inference workloads.
 
-## Install an evaluation stack
+Installation has two parts: Helm deploys the TEI services into Kubernetes, and a GitHub Release
+provides the TUI binary that runs on your computer.
+
+## 1. Install TEI in the cluster
 
 The default chart installs TEI with dedicated Prometheus, NVIDIA dcgm-exporter, and PostgreSQL
 services. It requires a default StorageClass and provisions 28 GiB of persistent storage.
@@ -25,24 +28,59 @@ services. It requires a default StorageClass and provisions 28 GiB of persistent
 ```shell
 helm upgrade --install tei \
   oci://ghcr.io/tandemn-labs/charts/tei \
-  --version 0.2.0 \
-  --namespace tei-system \
-  --create-namespace \
-  --set prometheus.enabled=true
+  --version 0.2.1 \
+  --namespace tandemn-system \
+  --create-namespace
 ```
 
 Wait for TEI to become ready:
 
 ```shell
-kubectl --namespace tei-system rollout status deployment/tei-tei --timeout=5m
+kubectl --namespace tandemn-system rollout status deployment/tei-tei --timeout=5m
 ```
+
+## 2. Install the local TUI
+
+Download the archive that matches the computer where you will run the TUI:
+
+| Computer | Release archive |
+| --- | --- |
+| macOS, Apple silicon | `tei-0.2.1-darwin-arm64.tar.gz` |
+| macOS, Intel | `tei-0.2.1-darwin-amd64.tar.gz` |
+| Linux, x86-64 | `tei-0.2.1-linux-amd64.tar.gz` |
+| Linux, ARM64 | `tei-0.2.1-linux-arm64.tar.gz` |
+| Windows, x86-64 | `tei-0.2.1-windows-amd64.zip` |
+
+For macOS or Linux, set `TEI_PLATFORM` to the matching value from the table and install the binary:
+
+```shell
+TEI_VERSION=0.2.1
+TEI_PLATFORM=linux-amd64
+
+curl -LO "https://github.com/Tandemn-Labs/tandemn-efficiency-index/releases/download/v${TEI_VERSION}/tei-${TEI_VERSION}-${TEI_PLATFORM}.tar.gz"
+tar -xzf "tei-${TEI_VERSION}-${TEI_PLATFORM}.tar.gz"
+mkdir -p "$HOME/.local/bin"
+install -m 0755 tei "$HOME/.local/bin/tei"
+```
+
+Ensure `$HOME/.local/bin` is on your `PATH`. On Windows, download the `.zip` from the
+[Releases page](https://github.com/Tandemn-Labs/tandemn-efficiency-index/releases), extract
+`tei.exe`, and place it in a directory on your `PATH`.
+
+Run the TUI from a computer with `kubectl` access to the cluster:
+
+```shell
+tei --kube
+```
+
+The TUI opens a temporary Kubernetes port-forward to the TEI service in `tandemn-system`.
 
 ## Open the dashboard
 
 Keep this port-forward running:
 
 ```shell
-kubectl --namespace tei-system port-forward service/tei-tei 8000:8000
+kubectl --namespace tandemn-system port-forward service/tei-tei 8000:8000
 ```
 
 Open <http://127.0.0.1:8000>. The first useful charts appear after Prometheus has collected
@@ -52,7 +90,7 @@ Check readiness or logs when the collector does not start:
 
 ```shell
 curl http://127.0.0.1:8000/readyz
-kubectl --namespace tei-system logs deployment/tei-tei
+kubectl --namespace tandemn-system logs deployment/tei-tei
 ```
 
 ## Production configuration
@@ -65,7 +103,7 @@ Download the chart and copy its production profile:
 
 ```shell
 helm pull oci://ghcr.io/tandemn-labs/charts/tei \
-  --version 0.2.0 \
+  --version 0.2.1 \
   --untar
 
 cp tei/values-production.yaml tei-production.yaml
@@ -80,8 +118,8 @@ Install the configured release:
 ```shell
 helm upgrade --install tei \
   oci://ghcr.io/tandemn-labs/charts/tei \
-  --version 0.2.0 \
-  --namespace tei-system \
+  --version 0.2.1 \
+  --namespace tandemn-system \
   --create-namespace \
   --values tei-production.yaml
 ```
@@ -90,24 +128,10 @@ The external Prometheus server must already scrape DCGM and the relevant Dynamo 
 all chart settings with:
 
 ```shell
-helm show values oci://ghcr.io/tandemn-labs/charts/tei --version 0.2.0
+helm show values oci://ghcr.io/tandemn-labs/charts/tei --version 0.2.1
 ```
 
-## Private packages
-
-If the GHCR packages are private, authenticate Helm before downloading the chart:
-
-```shell
-helm registry login ghcr.io
-```
-
-The cluster also needs a GHCR image pull Secret in `tei-system`. Pass it to Helm with:
-
-```shell
---set 'imagePullSecrets[0].name=YOUR_SECRET_NAME'
-```
-
-Public packages require neither step.
+The chart and image are public packages. Customers do not need a GHCR login or image pull Secret.
 
 ## Upgrade
 
@@ -117,21 +141,21 @@ Review the release notes and reuse the same values file with the new version:
 helm upgrade tei \
   oci://ghcr.io/tandemn-labs/charts/tei \
   --version NEW_VERSION \
-  --namespace tei-system \
+  --namespace tandemn-system \
   --values tei-production.yaml
 ```
 
 ## Uninstall
 
 ```shell
-helm uninstall tei --namespace tei-system
+helm uninstall tei --namespace tandemn-system
 ```
 
 Helm may retain Prometheus and PostgreSQL persistent volume claims. Review them before deleting any
 stored data:
 
 ```shell
-kubectl --namespace tei-system get persistentvolumeclaims
+kubectl --namespace tandemn-system get persistentvolumeclaims
 ```
 
 For source development, clone the repository, run `helm dependency build ./helm/tei`, and install

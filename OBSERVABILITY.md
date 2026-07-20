@@ -17,24 +17,21 @@ Prometheus time series ─────────────────┴─
 
 ## Start the dashboard
 
-Build the dependencies and install the Helm chart. TEI uses an existing Prometheus by default, so
-provide its URL when installing:
+Build the dependencies and install the Helm chart. The default chart includes Prometheus:
 
 ```shell
 helm dependency build ./helm/tei
 helm install tei ./helm/tei \
-  --namespace tei-system \
+  --namespace tandemn-system \
   --create-namespace \
   --set image.repository=example.com/tandemn-efficiency-index \
-  --set image.tag=0.2.0 \
-  --set prometheus.url=http://prometheus.monitoring.svc:9090
+  --set image.tag=0.2.1
 ```
 
-Set `prometheus.enabled=true` only when the cluster does not already have a suitable Prometheus
-server and TEI should install one. The bundled server retains 24 hours on a 20 GiB persistent
-volume and uses a ten-second scrape interval. Set `dcgmExporter.enabled=false` for an existing
-DCGM exporter, or `postgresql.enabled=false` plus `database.existingSecret.name` for an external
-PostgreSQL DSN.
+The bundled Prometheus server retains 24 hours on a 20 GiB persistent volume and uses a ten-second
+scrape interval. To reuse an existing server, set `prometheus.enabled=false` and `prometheus.url`.
+Set `dcgmExporter.enabled=false` for an existing DCGM exporter, or `postgresql.enabled=false` plus
+`database.existingSecret.name` for an external PostgreSQL DSN.
 
 The runtime lists visible CRDs and workload instances immediately, caches supported CRD APIs, and
 reconciles workloads and Pods every ten seconds. New workloads are added without a restart. Removed

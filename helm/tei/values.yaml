@@ -24,9 +24,9 @@ observation:
   stateIntervalSeconds: 10
 
 prometheus:
-  # Reuse an existing Prometheus by default. Set enabled=true only when this
-  # release should install and manage its own Prometheus instance.
-  enabled: false
+  # Install a dedicated Prometheus by default so the chart works without
+  # external services. Disable it and set url to reuse an existing server.
+  enabled: true
   url: ""
   timeoutSeconds: 5
   stepSeconds: 10

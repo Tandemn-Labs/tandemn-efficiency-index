@@ -67,7 +67,7 @@ func newRootCommand() *cobra.Command {
 	root.PersistentFlags().StringVar(&opts.token, "token", env("TEI_API_TOKEN", env("TEI_API_BEARER_TOKEN", "")), "TEI API bearer token")
 	root.PersistentFlags().DurationVar(&opts.timeout, "timeout", 10*time.Second, "API and port-forward timeout")
 	root.PersistentFlags().BoolVar(&opts.kube, "kube", false, "connect through a temporary kubectl port-forward")
-	root.PersistentFlags().StringVar(&opts.namespace, "namespace", "tei-system", "Kubernetes namespace")
+	root.PersistentFlags().StringVar(&opts.namespace, "namespace", "tandemn-system", "Kubernetes namespace")
 	root.PersistentFlags().StringVar(&opts.release, "release", "tei", "Helm release name")
 	root.PersistentFlags().StringVar(&opts.service, "service", "", "Kubernetes Service name override")
 	root.PersistentFlags().IntVar(&opts.localPort, "local-port", 0, "local port for --kube; zero selects an available port")

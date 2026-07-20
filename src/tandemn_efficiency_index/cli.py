@@ -21,7 +21,7 @@ from typing import Any
 from tandemn_efficiency_index.control import ControlPlaneError, TeiControlClient
 
 DEFAULT_API_URL = "http://127.0.0.1:8000"
-DEFAULT_NAMESPACE = "tei-system"
+DEFAULT_NAMESPACE = "tandemn-system"
 DEFAULT_RELEASE = "tei"
 
 

@@ -1,25 +1,23 @@
 # TEI Helm chart
 
-This chart installs the Tandemn Efficiency Index collector, API, and dashboard. It uses an existing
-Prometheus by default and requires `prometheus.url`. NVIDIA dcgm-exporter and PostgreSQL are bundled
-unless they are explicitly disabled.
+This chart installs the Tandemn Efficiency Index collector, API, and dashboard. Prometheus, NVIDIA
+dcgm-exporter, and PostgreSQL are bundled unless they are explicitly disabled.
 
 Install a self-contained evaluation release:
 
 ```shell
 helm upgrade --install tei \
   oci://ghcr.io/tandemn-labs/charts/tei \
-  --version 0.2.0 \
-  --namespace tei-system \
-  --create-namespace \
-  --set prometheus.enabled=true
+  --version 0.2.1 \
+  --namespace tandemn-system \
+  --create-namespace
 ```
 
 For production, pull and unpack the chart, copy `values-production.yaml`, and replace its namespaces,
 service URLs, Secret names, Ingress class, hostname, and TLS Secret:
 
 ```shell
-helm pull oci://ghcr.io/tandemn-labs/charts/tei --version 0.2.0 --untar
+helm pull oci://ghcr.io/tandemn-labs/charts/tei --version 0.2.1 --untar
 cp tei/values-production.yaml tei-production.yaml
 ```
 
@@ -28,8 +26,8 @@ Install with the edited values file:
 ```shell
 helm upgrade --install tei \
   oci://ghcr.io/tandemn-labs/charts/tei \
-  --version 0.2.0 \
-  --namespace tei-system \
+  --version 0.2.1 \
+  --namespace tandemn-system \
   --create-namespace \
   --values tei-production.yaml
 ```
