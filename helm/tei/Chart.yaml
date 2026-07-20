@@ -4,6 +4,17 @@ description: Tandemn Efficiency Index Kubernetes workload observability
 type: application
 version: 0.2.0
 appVersion: "0.2.0"
+home: https://github.com/Tandemn-Labs/tandemn-efficiency-index
+sources:
+  - https://github.com/Tandemn-Labs/tandemn-efficiency-index
+keywords:
+  - gpu
+  - inference
+  - kubernetes
+  - observability
+maintainers:
+  - name: Tandemn Labs
+    url: https://www.tandemn.com
 dependencies:
   - name: prometheus
     version: 29.17.0

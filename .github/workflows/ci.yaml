@@ -59,8 +59,18 @@ jobs:
           helm repo add nvidia https://nvidia.github.io/dcgm-exporter/helm-charts
           helm repo update
       - run: helm dependency build helm/tei
-      - run: helm lint helm/tei
-      - run: helm template tei helm/tei --namespace tei-system
+      - run: >-
+          helm lint helm/tei
+          --set prometheus.url=http://prometheus.monitoring.svc:9090
+      - run: helm lint helm/tei --values helm/tei/values-production.yaml
+      - run: >-
+          helm template tei helm/tei
+          --namespace tei-system
+          --set prometheus.enabled=true
+      - run: >-
+          helm template tei helm/tei
+          --namespace tei-system
+          --values helm/tei/values-production.yaml
       - run: >-
           helm template tei helm/tei
           --namespace tei-system
@@ -70,6 +80,26 @@ jobs:
           --set prometheus.url=http://prometheus.monitoring.svc:9090
           --set discovery.mode=namespaces
           --set 'discovery.namespaces[0]=inference'
+      - run: helm package helm/tei --destination /tmp
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: test -z "$(gofmt -l cmd internal)"
+      - run: go test ./...
+      - run: go vet ./...
+      - run: >-
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+          go build -trimpath
+          -ldflags="-s -w -X github.com/tandemn-labs/tandemn-efficiency-index/internal/cli.version=ci"
+          -o /tmp/tei
+          ./cmd/tei
+      - run: /tmp/tei --version
+
   container:
     runs-on: ubuntu-latest
     steps:

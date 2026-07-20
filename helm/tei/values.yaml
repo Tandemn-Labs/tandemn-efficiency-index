@@ -4,12 +4,15 @@ image:
   repository: ghcr.io/tandemn-labs/tandemn-efficiency-index
   pullPolicy: IfNotPresent
   tag: ""
+  # When set, digest takes precedence over tag.
+  digest: ""
 
 imagePullSecrets: []
 
 serviceAccount:
   create: true
   name: ""
+  annotations: {}
 
 discovery:
   mode: cluster
@@ -21,7 +24,9 @@ observation:
   stateIntervalSeconds: 10
 
 prometheus:
-  enabled: true
+  # Reuse an existing Prometheus by default. Set enabled=true only when this
+  # release should install and manage its own Prometheus instance.
+  enabled: false
   url: ""
   timeoutSeconds: 5
   stepSeconds: 10
@@ -170,6 +175,20 @@ service:
   type: ClusterIP
   port: 8000
 
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: tei.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+revisionHistoryLimit: 3
+priorityClassName: ""
+
 resources:
   requests:
     cpu: 100m
@@ -182,6 +201,8 @@ podSecurityContext:
   runAsNonRoot: true
   runAsUser: 65532
   runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
 
 securityContext:
   allowPrivilegeEscalation: false
@@ -194,6 +215,7 @@ terminationGracePeriodSeconds: 30
 
 podAnnotations: {}
 podLabels: {}
+deploymentAnnotations: {}
 
 nodeSelector: {}
 tolerations: []

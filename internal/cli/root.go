@@ -17,7 +17,7 @@ import (
 	"github.com/tandemn-labs/tandemn-efficiency-index/internal/tui"
 )
 
-const version = "0.2.0"
+var version = "dev"
 
 type options struct {
 	apiURL    string

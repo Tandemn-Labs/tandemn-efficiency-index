@@ -1,0 +1,24 @@
+TEI {{ .Chart.AppVersion }} has been installed in namespace {{ .Release.Namespace }}.
+
+Wait for the collector:
+
+  kubectl --namespace {{ .Release.Namespace }} rollout status deployment/{{ include "tei.fullname" . }} --timeout=5m
+
+Check readiness:
+
+  # Terminal 1
+  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "tei.fullname" . }} 8000:{{ .Values.service.port }}
+
+  # Terminal 2
+  curl http://127.0.0.1:8000/readyz
+
+{{- if .Values.ingress.enabled }}
+Dashboard:
+{{- range .Values.ingress.hosts }}
+  https://{{ .host }}
+{{- end }}
+{{- else }}
+Dashboard:
+
+  Keep the port-forward above running and open http://127.0.0.1:8000
+{{- end }}

@@ -6,11 +6,74 @@ on:
       - "v*"
 
 permissions:
-  contents: read
+  contents: write
   packages: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  publish:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      image: ${{ steps.release.outputs.image }}
+      chart_registry: ${{ steps.release.outputs.chart_registry }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: azure/setup-helm@v4
+      - id: release
+        name: Validate release version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          repository="${GITHUB_REPOSITORY#*/}"
+          chart_version="$(sed -n 's/^version: //p' helm/tei/Chart.yaml | head -1)"
+          app_version="$(sed -n 's/^appVersion: "\(.*\)"/\1/p' helm/tei/Chart.yaml | head -1)"
+          python_version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)"
+          test "$version" = "$chart_version"
+          test "$version" = "$app_version"
+          test "$version" = "$python_version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/$owner/$repository" >> "$GITHUB_OUTPUT"
+          echo "chart_registry=oci://ghcr.io/$owner/charts" >> "$GITHUB_OUTPUT"
+      - run: uv sync --frozen --group dev
+      - run: uv run ruff format --check src tests smoketest
+      - run: uv run ruff check src tests smoketest
+      - run: uv run mypy src tests smoketest
+      - run: uv run pytest
+      - run: uv run pytest smoketest
+      - run: go test ./...
+      - run: go vet ./...
+      - run: helm dependency build helm/tei
+      - run: >-
+          helm lint helm/tei
+          --set prometheus.url=http://prometheus.monitoring.svc:9090
+      - run: helm lint helm/tei --values helm/tei/values-production.yaml
+      - run: >-
+          helm template tei helm/tei
+          --namespace tei-system
+          --set prometheus.enabled=true
+          > /dev/null
+      - run: >-
+          helm template tei helm/tei
+          --namespace tei-system
+          --values helm/tei/values-production.yaml
+          > /dev/null
+
+  image:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,23 +87,130 @@ jobs:
       - uses: docker/metadata-action@v5
         id: metadata
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ needs.validate.outputs.image }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=Tandemn Efficiency Index
+            org.opencontainers.image.description=Kubernetes GPU inference workload observability
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ needs.validate.outputs.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  chart:
+    needs:
+      - validate
+      - image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
-      - name: Package and publish Helm chart
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: helm dependency build helm/tei
+      - run: mkdir -p dist
+      - run: >-
+          helm package helm/tei
+          --destination dist
+          --version "${{ needs.validate.outputs.version }}"
+          --app-version "${{ needs.validate.outputs.version }}"
+      - run: >-
+          helm push
+          "dist/tei-${{ needs.validate.outputs.version }}.tgz"
+          "${{ needs.validate.outputs.chart_registry }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart
+          path: dist/*.tgz
+          if-no-files-found: error
+
+  cli:
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            extension: ""
+          - goos: linux
+            goarch: arm64
+            extension: ""
+          - goos: darwin
+            goarch: amd64
+            extension: ""
+          - goos: darwin
+            goarch: arm64
+            extension: ""
+          - goos: windows
+            goarch: amd64
+            extension: .exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build CLI
         env:
-          HELM_EXPERIMENTAL_OCI: "1"
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          helm dependency build helm/tei
-          helm package helm/tei --version "$version" --app-version "$version"
-          helm push "tei-$version.tgz" "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts"
+          mkdir -p build dist
+          binary="tei${{ matrix.extension }}"
+          go build -trimpath \
+            -ldflags="-s -w -X github.com/tandemn-labs/tandemn-efficiency-index/internal/cli.version=${VERSION}" \
+            -o "build/$binary" \
+            ./cmd/tei
+          if [ "$GOOS" = "windows" ]; then
+            (cd build && zip "../dist/tei-${VERSION}-${GOOS}-${GOARCH}.zip" "$binary")
+          else
+            tar -czf "dist/tei-${VERSION}-${GOOS}-${GOARCH}.tar.gz" -C build "$binary"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  github-release:
+    needs:
+      - validate
+      - image
+      - chart
+      - cli
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Write checksums
+        working-directory: release-assets
+        run: sha256sum * > checksums.txt
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          release-assets/*
+          --verify-tag
+          --generate-notes
+          --title "$GITHUB_REF_NAME"

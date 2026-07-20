@@ -1,0 +1,43 @@
+# Copy this file and replace every example value before production use.
+
+discovery:
+  mode: namespaces
+  namespaces:
+    - inference
+
+# Production installations should use the cluster's managed Prometheus service.
+prometheus:
+  enabled: false
+  url: http://prometheus.monitoring.svc:9090
+
+# The external Prometheus service must already scrape a Kubernetes-aware dcgm-exporter.
+dcgmExporter:
+  enabled: false
+
+# Store the PostgreSQL DSN in Secret tei-postgresql under key dsn.
+postgresql:
+  enabled: false
+
+database:
+  existingSecret:
+    name: tei-postgresql
+    key: dsn
+
+# Store the dashboard/API bearer token in Secret tei-api-token under key token.
+auth:
+  bearerTokenSecret:
+    name: tei-api-token
+    key: token
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: tei.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: tei-tls
+      hosts:
+        - tei.example.com
