@@ -185,6 +185,35 @@ def test_caches_supported_crds_between_workload_reconciliations() -> None:
     assert extensions.calls == 1
 
 
+def test_available_resource_map_reports_installed_supported_crds() -> None:
+    discovery = KubernetesWorkloadDiscovery(
+        FakeApiextensionsApi(
+            [
+                _crd(
+                    "nvidia.com",
+                    "DynamoGraphDeployment",
+                    "dynamographdeployments",
+                    "v1beta1",
+                ),
+                _crd("example.com", "Unrelated", "unrelateds", "v1"),
+            ]
+        ),
+        FakeCustomObjectsApi([]),
+    )
+
+    resource_map = discovery.available_resource_map()
+
+    assert resource_map == {
+        "dynamographdeployments.nvidia.com": {
+            "group": "nvidia.com",
+            "kind": "DynamoGraphDeployment",
+            "plural": "dynamographdeployments",
+            "served_versions": ["v1beta1"],
+            "selected_version": "v1beta1",
+        }
+    }
+
+
 def _crd(group: str, kind: str, plural: str, version: str) -> Any:
     return SimpleNamespace(
         spec=SimpleNamespace(

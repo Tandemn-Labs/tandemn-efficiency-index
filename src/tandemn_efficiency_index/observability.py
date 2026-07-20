@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
 from tandemn_efficiency_index.models.cluster_snapshot import (
@@ -627,6 +627,18 @@ class ObservabilityRuntime:
                 max_points=max_points,
             )
 
+    def available_resource_map(self) -> dict[str, dict[str, Any]]:
+        """Return supported Kubernetes resources visible to the observer."""
+        with self._lock:
+            available_resource_map = getattr(
+                self._observer,
+                "available_resource_map",
+                None,
+            )
+            if not callable(available_resource_map):
+                return {}
+            return cast(dict[str, dict[str, Any]], available_resource_map())
+
     def status(self) -> dict[str, Any]:
         """Return process and collector status for health endpoints."""
         process = self.process_status()
@@ -759,6 +771,9 @@ def _handler_for(
             if parsed.path == "/api/v1/status":
                 self._send_json(runtime.status())
                 return
+            if parsed.path == "/api/v1/resources":
+                self._serve_resources()
+                return
             if parsed.path == "/api/v1/snapshot":
                 self._serve_snapshot(parse_qs(parsed.query))
                 return
@@ -799,6 +814,18 @@ def _handler_for(
                 )
                 return
             self._send_json(runtime.status())
+
+        def _serve_resources(self) -> None:
+            try:
+                resource_map = runtime.available_resource_map()
+            except Exception as exc:
+                LOGGER.exception("Kubernetes resource map request failed")
+                self._send_json(
+                    {"error": f"Kubernetes resource map is unavailable: {exc}"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            self._send_json({"resources": resource_map})
 
         def _serve_snapshot(self, query: Mapping[str, list[str]]) -> None:
             try:

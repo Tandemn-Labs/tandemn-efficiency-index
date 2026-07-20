@@ -182,6 +182,26 @@ class KubernetesWorkloadDiscovery:
         LOGGER.info("Discovered %d Kubernetes workloads", len(workloads))
         return workloads
 
+    def available_resource_map(self) -> dict[str, dict[str, Any]]:
+        """Return JSON-ready metadata for installed supported workload CRDs."""
+        available = self._available_resources()
+        result: dict[str, dict[str, Any]] = {}
+        for supported in SUPPORTED_RESOURCES:
+            discovered = available.get((supported.group, supported.kind))
+            if discovered is None:
+                continue
+            result[f"{discovered.plural}.{discovered.group}"] = {
+                "group": discovered.group,
+                "kind": discovered.kind,
+                "plural": discovered.plural,
+                "served_versions": list(discovered.served_versions),
+                "selected_version": _select_version(
+                    discovered.served_versions,
+                    supported,
+                ),
+            }
+        return result
+
     def _available_resources(self) -> dict[tuple[str, str], DiscoveredCrd]:
         now = time.monotonic()
         if (

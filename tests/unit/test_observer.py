@@ -92,6 +92,14 @@ class FakeWorkloadDiscovery:
         self.calls += 1
         return dict(self.workloads)
 
+    def available_resource_map(self) -> dict[str, dict[str, object]]:
+        return {
+            "dynamographdeployments.nvidia.com": {
+                "kind": "DynamoGraphDeployment",
+                "selected_version": "v1beta1",
+            }
+        }
+
 
 def test_observer_queries_prometheus_only_for_live_snapshot_windows() -> None:
     now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
@@ -169,6 +177,20 @@ def test_observer_reconciles_discovered_workloads_on_refresh_interval() -> None:
     assert discovery.calls == 2
     assert record.jobs[workload.workload_id].active is False
     assert record.jobs[workload.workload_id].removed_at == now + timedelta(seconds=60)
+
+
+def test_observer_exposes_workload_discovery_resource_map() -> None:
+    discovery = FakeWorkloadDiscovery({})
+    observer = ClusterObserver(
+        workloads={},
+        pod_collector=FakePodCollector(),
+        prometheus_collector=EmptyPrometheusCollector(),
+        workload_discovery=discovery,
+    )
+
+    resource_map = observer.available_resource_map()
+
+    assert resource_map["dynamographdeployments.nvidia.com"]["selected_version"] == ("v1beta1")
 
 
 def test_observer_is_not_ready_when_prometheus_check_fails() -> None:

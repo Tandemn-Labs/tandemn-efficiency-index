@@ -35,6 +35,14 @@ class FakeObserver:
         self.collected.set()
         return self._record
 
+    def available_resource_map(self) -> dict[str, dict[str, object]]:
+        return {
+            "dynamographdeployments.nvidia.com": {
+                "kind": "DynamoGraphDeployment",
+                "selected_version": "v1beta1",
+            }
+        }
+
 
 class FailingStatusObserver(FakeObserver):
     def status(self) -> dict[str, object]:
@@ -148,6 +156,12 @@ def test_observation_control_endpoints_require_auth_and_keep_api_available() -> 
     assert stopped["lifecycle"] == "stopped"
     assert client.health()["healthy"] is True
     assert client.status()["lifecycle"] == "stopped"
+
+    resources = client.resources()
+    assert resources["resources"]["dynamographdeployments.nvidia.com"] == {
+        "kind": "DynamoGraphDeployment",
+        "selected_version": "v1beta1",
+    }
 
     with pytest.raises(ControlPlaneError) as unauthorized:
         TeiControlClient(f"http://{host}:{port}").start_observation()

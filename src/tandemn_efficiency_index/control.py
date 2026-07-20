@@ -94,6 +94,10 @@ class TeiControlClient:
         """Return the complete control-plane status document."""
         return self._request("GET", "/api/v1/status")
 
+    def resources(self) -> dict[str, Any]:
+        """Return the available Kubernetes workload resource map."""
+        return self._request("GET", "/api/v1/resources")
+
     def snapshot(self, window_seconds: int, max_points: int) -> dict[str, Any]:
         """Return a bounded observability snapshot."""
         path = f"/api/v1/snapshot?window_seconds={window_seconds}&max_points={max_points}"

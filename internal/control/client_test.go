@@ -9,7 +9,7 @@ import (
 )
 
 func TestClientMapsControlEndpointsAndAuthentication(t *testing.T) {
-	requests := make(chan *http.Request, 2)
+	requests := make(chan *http.Request, 3)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests <- request.Clone(request.Context())
 		writer.Header().Set("Content-Type", "application/json")
@@ -21,6 +21,9 @@ func TestClientMapsControlEndpointsAndAuthentication(t *testing.T) {
 	if _, err := client.Status(); err != nil {
 		t.Fatalf("status: %v", err)
 	}
+	if _, err := client.Resources(); err != nil {
+		t.Fatalf("resources: %v", err)
+	}
 	if _, err := client.StopObservation(); err != nil {
 		t.Fatalf("stop observation: %v", err)
 	}
@@ -31,6 +34,10 @@ func TestClientMapsControlEndpointsAndAuthentication(t *testing.T) {
 	}
 	if statusRequest.Header.Get("Authorization") != "Bearer secret" {
 		t.Fatalf("missing bearer token")
+	}
+	resourcesRequest := <-requests
+	if resourcesRequest.Method != http.MethodGet || resourcesRequest.URL.Path != "/api/v1/resources" {
+		t.Fatalf("unexpected resources request: %s %s", resourcesRequest.Method, resourcesRequest.URL.Path)
 	}
 	stopRequest := <-requests
 	if stopRequest.Method != http.MethodPost || stopRequest.URL.Path != "/api/v1/observation/stop" {

@@ -27,6 +27,7 @@ def test_control_client_maps_read_and_lifecycle_endpoints() -> None:
     transport = FakeTransport(
         [
             {"lifecycle": "running"},
+            {"resources": {}},
             {"report_type": "prometheus_range_report"},
             {"lifecycle": "stopped"},
         ]
@@ -39,6 +40,7 @@ def test_control_client_maps_read_and_lifecycle_endpoints() -> None:
     )
 
     assert client.status()["lifecycle"] == "running"
+    assert client.resources() == {"resources": {}}
     assert client.snapshot(3600, 180)["report_type"] == "prometheus_range_report"
     assert client.stop_observation()["lifecycle"] == "stopped"
 
@@ -46,6 +48,12 @@ def test_control_client_maps_read_and_lifecycle_endpoints() -> None:
         (
             "GET",
             "http://tei.example/api/v1/status",
+            {"Accept": "application/json", "Authorization": "Bearer secret"},
+            3,
+        ),
+        (
+            "GET",
+            "http://tei.example/api/v1/resources",
             {"Accept": "application/json", "Authorization": "Bearer secret"},
             3,
         ),

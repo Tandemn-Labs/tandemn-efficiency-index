@@ -38,6 +38,8 @@ class WorkloadDiscoverer(Protocol):
 
     def discover(self) -> dict[str, Workload]: ...
 
+    def available_resource_map(self) -> dict[str, dict[str, Any]]: ...
+
 
 class PodCollector(Protocol):
     """Worker Pod collection operation required by the observer."""
@@ -323,6 +325,12 @@ class ClusterObserver:
             "storage": storage,
             "storage_error": storage_error,
         }
+
+    def available_resource_map(self) -> dict[str, dict[str, Any]]:
+        """Return supported Kubernetes resources visible to workload discovery."""
+        if self._workload_discovery is None:
+            return {}
+        return self._workload_discovery.available_resource_map()
 
     def close(self) -> None:
         """Close durable resources after collection has stopped."""

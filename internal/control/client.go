@@ -50,6 +50,10 @@ func (c *Client) Status() (Response, error) {
 	return c.request(http.MethodGet, "/api/v1/status", false)
 }
 
+func (c *Client) Resources() (Response, error) {
+	return c.request(http.MethodGet, "/api/v1/resources", false)
+}
+
 func (c *Client) Snapshot(windowSeconds, maxPoints int) (Response, error) {
 	query := url.Values{}
 	query.Set("window_seconds", fmt.Sprintf("%d", windowSeconds))
